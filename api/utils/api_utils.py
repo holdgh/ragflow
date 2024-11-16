@@ -39,6 +39,7 @@ from api import settings
 from api import settings
 from api.utils import CustomJSONEncoder, get_uuid
 from api.utils import json_dumps
+from api.constants import REQUEST_WAIT_SEC, REQUEST_MAX_WAIT_SEC
 
 requests.models.complexjson.dumps = functools.partial(
     json.dumps, cls=CustomJSONEncoder)
@@ -52,7 +53,7 @@ def request(**kwargs):
         k.replace(
             '_',
             '-').upper(): v for k,
-                                v in kwargs.get(
+        v in kwargs.get(
             'headers',
             {}).items()}
     prepped = requests.Request(**kwargs).prepare()
@@ -87,7 +88,7 @@ def request(**kwargs):
 def get_exponential_backoff_interval(retries, full_jitter=False):
     """Calculate the exponential backoff wait time."""
     # Will be zero if factor equals 0
-    countdown = min(settings.REQUEST_MAX_WAIT_SEC, settings.REQUEST_WAIT_SEC * (2 ** retries))
+    countdown = min(REQUEST_MAX_WAIT_SEC, REQUEST_WAIT_SEC * (2 ** retries))
     # Full jitter according to
     # https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
     if full_jitter:
@@ -195,6 +196,7 @@ def get_json_result(code=settings.RetCode.SUCCESS, message='success', data=None)
     response = {"code": code, "message": message, "data": data}
     return jsonify(response)
 
+
 def apikey_required(func):
     @wraps(func)
     def decorated_function(*args, **kwargs):
@@ -271,9 +273,9 @@ def construct_error_response(e):
 def token_required(func):
     @wraps(func)
     def decorated_function(*args, **kwargs):
-        authorization_list=flask_request.headers.get('Authorization').split()
+        authorization_list = flask_request.headers.get('Authorization').split()
         if len(authorization_list) < 2:
-            return get_json_result(data=False,message="Please check your authorization format.")
+            return get_json_result(data=False, message="Please check your authorization format.")
         token = authorization_list[1]
         objs = APIToken.query(token=token)
         if not objs:
@@ -321,35 +323,40 @@ def generate_confirmation_token(tenent_id):
     return "ragflow-" + serializer.dumps(get_uuid(), salt=tenent_id)[2:34]
 
 
-def valid(permission,valid_permission,language,valid_language,chunk_method,valid_chunk_method):
-    if valid_parameter(permission,valid_permission):
-        return valid_parameter(permission,valid_permission)
-    if valid_parameter(language,valid_language):
-        return valid_parameter(language,valid_language)
-    if valid_parameter(chunk_method,valid_chunk_method):
-        return valid_parameter(chunk_method,valid_chunk_method)
+def valid(permission, valid_permission, language, valid_language, chunk_method, valid_chunk_method):
+    if valid_parameter(permission, valid_permission):
+        return valid_parameter(permission, valid_permission)
+    if valid_parameter(language, valid_language):
+        return valid_parameter(language, valid_language)
+    if valid_parameter(chunk_method, valid_chunk_method):
+        return valid_parameter(chunk_method, valid_chunk_method)
 
-def valid_parameter(parameter,valid_values):
+
+def valid_parameter(parameter, valid_values):
     if parameter and parameter not in valid_values:
-       return get_error_data_result(f"'{parameter}' is not in {valid_values}")
+        return get_error_data_result(f"'{parameter}' is not in {valid_values}")
 
-def get_parser_config(chunk_method,parser_config):
+
+def get_parser_config(chunk_method, parser_config):
     if parser_config:
         return parser_config
     if not chunk_method:
         chunk_method = "naive"
-    key_mapping={"naive":{"chunk_token_num": 128, "delimiter": "\\n!?;。；！？", "html4excel": False,"layout_recognize": True, "raptor": {"use_raptor": False}},
-                 "qa":{"raptor":{"use_raptor":False}},
-                 "resume":None,
-                 "manual":{"raptor":{"use_raptor":False}},
-                 "table":None,
-                 "paper":{"raptor":{"use_raptor":False}},
-                 "book":{"raptor":{"use_raptor":False}},
-                 "laws":{"raptor":{"use_raptor":False}},
-                 "presentation":{"raptor":{"use_raptor":False}},
-                 "one":None,
-                 "knowledge_graph":{"chunk_token_num":8192,"delimiter":"\\n!?;。；！？","entity_types":["organization","person","location","event","time"]},
-                 "email":None,
-                 "picture":None}
-    parser_config=key_mapping[chunk_method]
+    key_mapping = {
+        "naive": {"chunk_token_num": 128, "delimiter": "\\n!?;。；！？", "html4excel": False, "layout_recognize": True,
+                  "raptor": {"use_raptor": False}},
+        "qa": {"raptor": {"use_raptor": False}},
+        "resume": None,
+        "manual": {"raptor": {"use_raptor": False}},
+        "table": None,
+        "paper": {"raptor": {"use_raptor": False}},
+        "book": {"raptor": {"use_raptor": False}},
+        "laws": {"raptor": {"use_raptor": False}},
+        "presentation": {"raptor": {"use_raptor": False}},
+        "one": None,
+        "knowledge_graph": {"chunk_token_num": 8192, "delimiter": "\\n!?;。；！？",
+                            "entity_types": ["organization", "person", "location", "event", "time"]},
+        "email": None,
+        "picture": None}
+    parser_config = key_mapping[chunk_method]
     return parser_config
