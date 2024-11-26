@@ -24,7 +24,7 @@ from rag.nlp import search
 from graphrag import search as kg_search
 from api.utils import get_base_config, decrypt_database_config
 from api.constants import RAG_FLOW_SERVICE_NAME
-
+# 读取环境变量LIGHTEN【在dockerfile中有定义】的值，默认值为0
 LIGHTEN = int(os.environ.get('LIGHTEN', "0"))
 
 LLM = None
@@ -61,13 +61,19 @@ kg_retrievaler = None
 
 
 def init_settings():
+    """
+    从配置文件service_conf.yaml和环境变量中获取配置信息，初始化大模型、请求信息、认证信息、存储和检索工具对象
+    """
+    # 以global声明当前方法体内的变量名为全局变量
     global LLM, LLM_FACTORY, LLM_BASE_URL
+    # 读取大模型的配置字典
     LLM = get_base_config("user_default_llm", {})
     LLM_FACTORY = LLM.get("factory", "Tongyi-Qianwen")
     LLM_BASE_URL = LLM.get("base_url")
 
     global CHAT_MDL, EMBEDDING_MDL, RERANK_MDL, ASR_MDL, IMAGE2TEXT_MDL
     if not LIGHTEN:
+        # 如果lighten为0，则采用默认大模型配置。
         default_llm = {
             "Tongyi-Qianwen": {
                 "chat_model": "qwen-plus",
@@ -127,9 +133,11 @@ def init_settings():
         }
 
         if LLM_FACTORY:
+            # LLM_FACTORY非空时，从default中选取相应的char_model、asr_model和image2text_model
             CHAT_MDL = default_llm[LLM_FACTORY]["chat_model"] + f"@{LLM_FACTORY}"
             ASR_MDL = default_llm[LLM_FACTORY]["asr_model"] + f"@{LLM_FACTORY}"
             IMAGE2TEXT_MDL = default_llm[LLM_FACTORY]["image2text_model"] + f"@{LLM_FACTORY}"
+        # 选取BAAI的embedding和rerank模型
         EMBEDDING_MDL = default_llm["BAAI"]["embedding_model"] + "@BAAI"
         RERANK_MDL = default_llm["BAAI"]["rerank_model"] + "@BAAI"
 
@@ -138,10 +146,10 @@ def init_settings():
     PARSERS = LLM.get(
         "parsers",
         "naive:General,qa:Q&A,resume:Resume,manual:Manual,table:Table,paper:Paper,book:Book,laws:Laws,presentation:Presentation,picture:Picture,one:One,audio:Audio,knowledge_graph:Knowledge Graph,email:Email")
-
+    # 获取配置文件service_conf.yaml中的IP和端口
     HOST_IP = get_base_config(RAG_FLOW_SERVICE_NAME, {}).get("host", "127.0.0.1")
     HOST_PORT = get_base_config(RAG_FLOW_SERVICE_NAME, {}).get("http_port")
-
+    # 获取配置文件service_conf.yaml中的secret_key、authentication、oauth
     SECRET_KEY = get_base_config(
         RAG_FLOW_SERVICE_NAME,
         {}).get("secret_key", str(date.today()))
@@ -159,6 +167,7 @@ def init_settings():
     FEISHU_OAUTH = get_base_config("oauth", {}).get("feishu")
 
     global DOC_ENGINE, docStoreConn, retrievaler, kg_retrievaler
+    # 从环境变量中获取DOC_ENGINE信息，以此来初始化全局变量docStoreConn对象【存储工具，是ES还是infinity】
     DOC_ENGINE = os.environ.get('DOC_ENGINE', "elasticsearch")
     if DOC_ENGINE == "elasticsearch":
         docStoreConn = rag.utils.es_conn.ESConnection()
@@ -166,7 +175,7 @@ def init_settings():
         docStoreConn = rag.utils.infinity_conn.InfinityConnection()
     else:
         raise Exception(f"Not supported doc engine: {DOC_ENGINE}")
-
+    # 初始化全局变量retrievaler和kg_retrievaler【检索工具】
     retrievaler = search.Dealer(docStoreConn)
     kg_retrievaler = kg_search.KGSearch(docStoreConn)
 

@@ -132,9 +132,14 @@ COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 ENV PYTHONPATH=/ragflow/
-
+# 将配置信息模板拷贝到conf目录下，将启动脚本拷贝到代码根目录下【启动脚本和conf目录处于同一级目录】
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
 COPY docker/entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
+# · docker run <image>的命令行参数将追加到ENTRYPOINT中的所有参数之后，并将重写使用CMD指定的所有参数。这允许将参数传递到入口点，即docker run <image> -d将把-d参数传递给入口点。可以使用docker run --entrypoint来重写ENTRYPOINT指令。
+
+# · shell形式禁止使用任何CMD或RUN命令行参数，缺点是ENTRYPOINT作为/bin/sh -c的子命令启动，其不会传递信号。这意味着可执行文件将不是容器的PID 1，也不会接收Unix信号，因此可执行文件将不会从docker stop <container>接收SIGTERM。
+
+# · dockerfile中允许存在多个ENTRYPOINT指令，但仅最后一个ENTRYPOINT指令才会起作用。
 ENTRYPOINT ["./entrypoint.sh"]

@@ -51,6 +51,11 @@ MAXIMUM_OF_UPLOADING_FILES = 256
 @token_required
 def upload(dataset_id, tenant_id):
     """
+    功能：上传文件
+    逻辑：
+        1、参数检查
+        2、上传文件
+        3、构造返回值
     Upload documents to a dataset.
     ---
     tags:
@@ -106,16 +111,20 @@ def upload(dataset_id, tenant_id):
                     type: string
                     description: Processing status.
     """
+    # =============参数检查-start============
+    # file有无检查
     if "file" not in request.files:
         return get_error_data_result(
             message="No file part!", code=settings.RetCode.ARGUMENT_ERROR
         )
     file_objs = request.files.getlist("file")
+    # 文件名非空检查
     for file_obj in file_objs:
         if file_obj.filename == "":
             return get_result(
                 message="No file selected!", code=settings.RetCode.ARGUMENT_ERROR
             )
+    # 文件大小检查
     # total size
     total_size = 0
     for file_obj in file_objs:
@@ -128,16 +137,23 @@ def upload(dataset_id, tenant_id):
             message=f"Total file size exceeds 10MB limit! ({total_size / (1024 * 1024):.2f} MB)",
             code=settings.RetCode.ARGUMENT_ERROR,
         )
+    # 知识库id合法性检查
     e, kb = KnowledgebaseService.get_by_id(dataset_id)
     if not e:
         raise LookupError(f"Can't find the dataset with ID {dataset_id}!")
+    # =============参数检查-end============
+    # =============上传文件-start===============
     err, files = FileService.upload_document(kb, file_objs, tenant_id)
+    # ==========上传文件-end===========
     if err:
         return get_result(message="\n".join(err), code=settings.RetCode.SERVER_ERROR)
+    # =======构造返回值-start=======
     # rename key's name
     renamed_doc_list = []
     for file in files:
+        # 文件记录对应的文档记录
         doc = file[0]
+        # 把文件记录中的下述字段重命名处理
         key_mapping = {
             "chunk_num": "chunk_count",
             "kb_id": "dataset_id",
@@ -148,8 +164,10 @@ def upload(dataset_id, tenant_id):
         for key, value in doc.items():
             new_key = key_mapping.get(key, key)
             renamed_doc[new_key] = value
+        # 设置返回数据中的文件处理状态为UNSTART，未开始处理
         renamed_doc["run"] = "UNSTART"
         renamed_doc_list.append(renamed_doc)
+    # =======构造返回值-end=======
     return get_result(data=renamed_doc_list)
 
 
@@ -590,6 +608,13 @@ def delete(tenant_id, dataset_id):
 @token_required
 def parse(tenant_id, dataset_id):
     """
+    功能：解析文档【文档为上传文件后生成的文档记录】
+    逻辑：
+        1、校验用户知识库权限与文档id列表
+        2、遍历处理文档id列表
+            - 文档用户权限校验
+            - 解析文档前的初始化
+            - 生成任务，放入队列
     Start parsing documents into chunks.
     ---
     tags:
@@ -625,31 +650,49 @@ def parse(tenant_id, dataset_id):
         schema:
           type: object
     """
+    # =======校验用户知识库权限与文档id列表-start========
     if not KnowledgebaseService.accessible(kb_id=dataset_id, user_id=tenant_id):
         return get_error_data_result(message=f"You don't own the dataset {dataset_id}.")
     req = request.json
     if not req.get("document_ids"):
         return get_error_data_result("`document_ids` is required")
+    # =======校验用户知识库权限与文档id列表-end========
+    # 逐个文档id处理
     for id in req["document_ids"]:
+        # ======文档用户权限校验-start=======
+        # 依据知识库id和文档id查询文档记录
         doc = DocumentService.query(id=id, kb_id=dataset_id)
         if not doc:
+            # 文档记录为空，提示用户对此文档无权
             return get_error_data_result(message=f"You don't own the document {id}.")
         if doc[0].progress != 0.0:
+            # 文档解析进度字段progress非0时【注意上传文件时，文档记录progress字段初始为0.0。当前解析操作是由用户手动触发的，因此取出的文档记录progress字段应为0.0】，抛出异常
             return get_error_data_result(
                 "Can't stop parsing document with progress at 0 or 100"
             )
+        # ======文档用户权限校验-end=======
+        # =======解析文档前的初始化-start======
         info = {"run": "1", "progress": 0}
         info["progress_msg"] = ""
         info["chunk_num"] = 0
         info["token_num"] = 0
+        # 更新文档记录：run、progress、progress_msg、chunk_num、token_num
         DocumentService.update_by_id(id, info)
+        # TODO 清理可能存在的脏数据
         settings.docStoreConn.delete({"doc_id": id}, search.index_name(tenant_id), dataset_id)
         TaskService.filter_delete([Task.doc_id == id])
+        # =======解析文档前的初始化-end======
+        # =========生成任务，放入队列-start========
+        # 查询文档记录
         e, doc = DocumentService.get_by_id(id)
+        # 将文档记录字典化，并设置tenant_id字段值为当前用户id
         doc = doc.to_dict()
         doc["tenant_id"] = tenant_id
+        # [对于文件上传得到的文档而言]获取文件在minio中的存储地址name和文件桶名【知识库id】
         bucket, name = File2DocumentService.get_storage_address(doc_id=doc["id"])
+        # 基于文档记录、minio桶名、minio文件存储地址，创建任务，放入队列
         queue_tasks(doc, bucket, name)
+        # =========生成任务，放入队列-end========
     return get_result()
 
 

@@ -383,7 +383,7 @@ class DatabaseLock(Enum):
     MYSQL = MysqlDatabaseLock
     POSTGRES = PostgresDatabaseLock
 
-
+# 全局变量 DB 数据库连接
 DB = BaseDataBase().database_connection
 DB.lock = DatabaseLock[settings.DATABASE_TYPE.upper()].value
 
@@ -403,6 +403,10 @@ class DataBaseModel(BaseModel):
 
 @DB.connection_context()
 def init_database_tables(alter_fields=[]):
+    """
+    创建数据表，有创建失败的数据表，则抛出异常提示
+    创建数据表成功则迁移数据库
+    """
     members = inspect.getmembers(sys.modules[__name__], inspect.isclass)
     table_objs = []
     create_failed_list = []
@@ -657,6 +661,9 @@ class TenantLLM(DataBaseModel):
 
 
 class Knowledgebase(DataBaseModel):
+    """
+    知识库数据表实体类
+    """
     id = CharField(max_length=32, primary_key=True)
     avatar = TextField(null=True, help_text="avatar base64 string")
     tenant_id = CharField(max_length=32, null=False, index=True)

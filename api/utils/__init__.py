@@ -35,11 +35,19 @@ from . import file_utils
 
 
 def conf_realpath(conf_name):
+    # 组合conf_name构成配置文件路径
     conf_path = f"conf/{conf_name}"
+    # 返回配置文件绝对路径
     return os.path.join(file_utils.get_project_base_directory(), conf_path)
 
 
 def read_config(conf_name=SERVICE_CONF):
+    """
+    入参来源于api目录下的constants.py中的常量
+    功能：以字典方式，读取配置文件的配置信息，返回字典
+    """
+    # 读取本地配置文件
+    # 初始化本地配置字典
     local_config = {}
     local_path = conf_realpath(f'local.{conf_name}')
 
@@ -47,14 +55,16 @@ def read_config(conf_name=SERVICE_CONF):
     if os.path.exists(local_path):
         local_config = file_utils.load_yaml_conf(local_path)
         if not isinstance(local_config, dict):
+            # 配置信息读取结果为非字典类型，则抛出异常
             raise ValueError(f'Invalid config file: "{local_path}".')
-
+    # 读取全局配置文件
     global_config_path = conf_realpath(conf_name)
     global_config = file_utils.load_yaml_conf(global_config_path)
 
     if not isinstance(global_config, dict):
+        # 配置信息读取结果为非字典类型，则抛出异常
         raise ValueError(f'Invalid config file: "{global_config_path}".')
-
+    # 将local_config中的配置信息更新【存在，则更新；不存在，则插入】到global_config中
     global_config.update(local_config)
     return global_config
 
@@ -69,6 +79,9 @@ def show_configs():
 
 
 def get_base_config(key, default=None):
+    """
+    从配置文件service_conf.yaml读取特定配置项key的配置值，如果取不到，则使用默认值【来自于入参default，当default为none时，从环境变量中取】
+    """
     if key is None:
         return None
     if default is None:

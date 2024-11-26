@@ -30,11 +30,14 @@ class RuntimeConfig(ReloadConfigBase):
     @classmethod
     def init_config(cls, **kwargs):
         for k, v in kwargs.items():
+            # hasattr()函数是Python内置函数之一，用于判断对象是否具有指定的属性或方法。它接受两个参数：对象和属性或方法的名称。函数返回一个布尔值，如果对象具有指定的属性或方法，则返回True，否则返回False。
             if hasattr(cls, k):
+                # 当前类具有属性k时，则为k属性设置值v
                 setattr(cls, k, v)
 
     @classmethod
     def init_env(cls):
+        # 更新ENV中的版本信息
         cls.ENV.update({"version": get_ragflow_version()})
 
     @classmethod

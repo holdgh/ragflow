@@ -152,6 +152,10 @@ def rewrite_json_file(filepath, json_data):
 
 
 def filename_type(filename):
+    """
+    功能：文件类型映射
+    逻辑：依据原始文件后缀名，返回文件类型枚举值
+    """
     filename = filename.lower()
     if re.match(r".*\.pdf$", filename):
         return FileType.PDF.value
@@ -170,10 +174,12 @@ def filename_type(filename):
     return FileType.OTHER.value
 
 def thumbnail_img(filename, blob):
+    # 将pdf|jpg|jpeg|png|tif|gif|icon|ico|webp|ppt|pptx文件转为png图片
     filename = filename.lower()
     if re.match(r".*\.pdf$", filename):
         pdf = pdfplumber.open(BytesIO(blob))
         buffered = BytesIO()
+        # TODO 只处理第一页？
         pdf.pages[0].to_image(resolution=32).annotated.save(buffered, format="png")
         return buffered.getvalue()
 
@@ -190,6 +196,7 @@ def thumbnail_img(filename, blob):
         try:
             with slides.Presentation(BytesIO(blob)) as presentation:
                 buffered = BytesIO()
+                # TODO 只处理第一页？
                 presentation.slides[0].get_thumbnail(0.03, 0.03).save(
                     buffered, drawing.imaging.ImageFormat.png)
                 return buffered.getvalue()

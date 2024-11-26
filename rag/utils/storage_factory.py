@@ -26,6 +26,6 @@ class StorageFactory:
     def create(cls, storage: Storage):
         return cls.storage_mapping[storage]()
 
-
+# 当前项目采用默认的MINIO存储方式，RAGFlowMinio
 STORAGE_IMPL_TYPE = os.getenv('STORAGE_IMPL', 'MINIO')
 STORAGE_IMPL = StorageFactory.create(Storage[STORAGE_IMPL_TYPE])

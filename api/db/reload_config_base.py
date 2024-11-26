@@ -14,6 +14,7 @@
 #  limitations under the License.
 #
 class ReloadConfigBase:
+    # cls表示类本身，self表示类的实例，cls用于类方法，self用于实例方法
     @classmethod
     def get_all(cls):
         configs = {}

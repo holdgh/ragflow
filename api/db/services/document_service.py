@@ -144,6 +144,14 @@ class DocumentService(CommonService):
     @classmethod
     @DB.connection_context()
     def get_unfinished_docs(cls):
+        """
+        查询未处理完成文档信息
+        条件：
+            - status=='1'
+            - type!='virtual'
+            - 0<process<1
+        问题：在上传文件操作中，初始化文档信息时，数据表document的process字段默认值为0【因此不在ragflow_server中update_process的处理范围之内】，status字段默认值为'1'，run字段默认值为'0'。TODO 那么，在什么时候文档满足未处理完成的查询条件呢？注意ragflow系统，文档解析是手动触发的，也即有专门的接口触发文档解析操作，推测生成了任务
+        """
         fields = [cls.model.id, cls.model.process_begin_at, cls.model.parser_config, cls.model.progress_msg,
                   cls.model.run]
         docs = cls.model.select(*fields) \
@@ -341,39 +349,62 @@ class DocumentService(CommonService):
     @classmethod
     @DB.connection_context()
     def update_progress(cls):
+        """
+        1、查询未处理完成的文档列表
+        2、逐一处理：
+            - 1、查询当前文档任务列表，为空则处理下一个文档
+            - 2、查询当前文档信息
+            - 3、遍历任务列表，统计完成状态finished、prg【处理成功数量？】,处理信息列表msg和处理失败数量bad
+            - 4、根据任务列表上述统计字段，更新文档处理相关字段：process_duation、run、progress、progress_msg
+        """
+        # 查询未处理完成的文档信息
         docs = cls.get_unfinished_docs()
         for d in docs:
             try:
+                # 查询数据库任务信息
                 tsks = Task.query(doc_id=d["id"], order_by=Task.create_time)
                 if not tsks:
+                    # 任务信息为空，则处理下一个文档
                     continue
                 msg = []
                 prg = 0
                 finished = True
                 bad = 0
+                # 查询当前文档信息
                 e, doc = DocumentService.get_by_id(d["id"])
                 status = doc.run  # TaskStatus.RUNNING.value
+                # 遍历当前文档的任务列表，统计完成状态finished、prg【处理成功数量？该指标不是整数】,处理信息列表和处理失败数量
                 for t in tsks:
                     if 0 <= t.progress < 1:
+                        # 0 表示未处理完成
                         finished = False
+                    # 不小于0，则累计；否则不累计
                     prg += t.progress if t.progress >= 0 else 0
+                    # 收集处理信息，去重
                     if t.progress_msg not in msg:
                         msg.append(t.progress_msg)
+                    # 收集处理失败数量，-1表示处理失败
                     if t.progress == -1:
                         bad += 1
                 prg /= len(tsks)
                 if finished and bad:
+                    # 若当前文档处理完成且存在处理失败的任务，则将prg置为-1，并将文档状态run字段置为4【任务失败】
                     prg = -1
                     status = TaskStatus.FAIL.value
                 elif finished:
+                    # 若处理完成且不存在失败任务
                     if d["parser_config"].get("raptor", {}).get("use_raptor") and d["progress_msg"].lower().find(
                             " raptor") < 0:
+                        # 若文档parser_config字段的raptor字段存在非空字段use_raptor且文档progress_msg字段的小写模式存在raptor字符串，则：
+                        # 1、创建指定文档的“组织树检索的递归抽象处理”任务，并插入数据库，插入redis消息队列rag_flow_svr_queue，redis插入失败，则抛出异常
+                        # 2、重新设置文档的prg值，并在文档progress_msg字段追加"------ RAPTOR -------"
                         queue_raptor_tasks(d)
                         prg = 0.98 * len(tsks) / (len(tsks) + 1)
                         msg.append("------ RAPTOR -------")
                     else:
+                        # 若文档parser_config字段的raptor字段不存在非空字段use_raptor或文档progress_msg字段的小写模式不存在raptor字符串，则将文档状态run字段置为3【任务完成】
                         status = TaskStatus.DONE.value
-
+                # 更新文档处理相关字段：process_duation、run、progress、progress_msg
                 msg = "\n".join(msg)
                 info = {
                     "process_duation": datetime.timestamp(
@@ -407,6 +438,9 @@ class DocumentService(CommonService):
 
 
 def queue_raptor_tasks(doc):
+    """
+    创建指定文档的“组织树检索的递归抽象处理”任务，并插入数据库，插入redis消息队列rag_flow_svr_queue，redis插入失败，则抛出异常
+    """
     def new_task():
         nonlocal doc
         return {
@@ -414,11 +448,13 @@ def queue_raptor_tasks(doc):
             "doc_id": doc["id"],
             "from_page": 0,
             "to_page": -1,
+            # 组织树检索的递归抽象处理
             "progress_msg": "Start to do RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval)."
         }
-
+    # 创建任务，并插入任务
     task = new_task()
     bulk_insert_into_db(Task, [task], True)
+    # 设置任务type字段为raptor，并将任务放入redis消息队列rag_flow_svr_queue中【若插入队列不成功，则抛出异常】
     task["type"] = "raptor"
     assert REDIS_CONN.queue_product(SVR_QUEUE_NAME, message=task), "Can't access Redis. Please check the Redis' status."
 

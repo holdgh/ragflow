@@ -931,6 +931,7 @@ class RAGFlowPdfParser:
 
     @staticmethod
     def total_page_number(fnm, binary=None):
+        # 获取pdf文件页数
         try:
             pdf = pdfplumber.open(
                 fnm) if not binary else pdfplumber.open(BytesIO(binary))

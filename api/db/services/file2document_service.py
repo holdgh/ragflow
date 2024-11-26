@@ -70,16 +70,23 @@ class File2DocumentService(CommonService):
     @classmethod
     @DB.connection_context()
     def get_storage_address(cls, doc_id=None, file_id=None):
+        # 查询file2Document记录【文档id非空，用文档id查；文档id为空，用文件id查】
         if doc_id:
             f2d = cls.get_by_document_id(doc_id)
         else:
             f2d = cls.get_by_file_id(file_id)
         if f2d:
+            # file2Document非空时
+            # 查询文件记录
             file = File.get_by_id(f2d[0].file_id)
             if not file.source_type or file.source_type == FileSource.LOCAL:
+                # 文件记录source_type字段为空或为空字符串，直接返回文件记录的parent_id和location字段
                 return file.parent_id, file.location
+            # 取file2Document记录中的文档id
             doc_id = f2d[0].document_id
-
+        # 断言文档id非空
         assert doc_id, "please specify doc_id"
+        # 查询文档记录
         e, doc = DocumentService.get_by_id(doc_id)
+        # 返回文档记录中的知识库id和location字段【上传文件操作中赋值为minio中的文件地址】
         return doc.kb_id, doc.location

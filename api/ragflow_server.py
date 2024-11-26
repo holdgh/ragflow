@@ -49,12 +49,15 @@ def update_progress():
     while True:
         time.sleep(3)
         try:
+            # 每3秒执行一次逻辑
+            # 逻辑：对未完成处理的文档依据其任务列表进行处理
             DocumentService.update_progress()
         except Exception:
             logging.exception("update_progress exception")
 
 
 if __name__ == '__main__':
+    # 打印启动日志
     logging.info(r"""
         ____   ___    ______ ______ __               
        / __ \ /   |  / ____// ____// /____  _      __
@@ -69,16 +72,19 @@ if __name__ == '__main__':
     logging.info(
         f'project base: {utils.file_utils.get_project_base_directory()}'
     )
+    # 打印api目录下的constants.py中的常量配置信息
     show_configs()
+    # 依据配置文件service_conf.yaml和环境变量初始化配置信息
     settings.init_settings()
 
-    # init db
+    # init db 初始化数据库--尚未理清
     init_web_db()
     init_web_data()
     # init runtime config
     import argparse
 
     parser = argparse.ArgumentParser()
+    # store_true参数，加上即为true，不加则为false
     parser.add_argument(
         "--version", default=False, help="RAGFlow version", action="store_true"
     )
@@ -87,20 +93,24 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
     if args.version:
+        # version参数为true时，打印版本信息
         print(get_ragflow_version())
         sys.exit(0)
 
     RuntimeConfig.DEBUG = args.debug
     if RuntimeConfig.DEBUG:
+        # debug参数为true时，打印调试提示信息
         logging.info("run on debug mode")
 
+    # 初始化版本和服务连接信息
     RuntimeConfig.init_env()
     RuntimeConfig.init_config(JOB_SERVER_HOST=settings.HOST_IP, HTTP_PORT=settings.HOST_PORT)
-
+    # 异步处理任务：对未完成处理的文档依据其任务列表进行处理
     thread = ThreadPoolExecutor(max_workers=1)
     thread.submit(update_progress)
 
     # start http server
+    # 启动后端接口服务，具体见api/apps/__init__.py中的app对象
     try:
         logging.info("RAGFlow HTTP server start...")
         run_simple(

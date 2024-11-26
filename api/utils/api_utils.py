@@ -117,6 +117,10 @@ def get_data_error_result(code=settings.RetCode.DATA_ERROR,
 
 
 def server_error_response(e):
+    """
+    全局异常处理
+    逻辑：未认证401返回401状态码；其他异常返回100状态码
+    """
     logging.exception(e)
     try:
         if e.code == 401:
