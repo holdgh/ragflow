@@ -614,7 +614,7 @@ def parse(tenant_id, dataset_id):
         2、遍历处理文档id列表
             - 文档用户权限校验
             - 解析文档前的初始化
-            - 生成任务，放入队列
+            - 生成任务【基于文档记录，分情况【一个任务处理多少页/一个任务处理多少行/一个任务处理整个文档】创建任务列表】，放入队列
     Start parsing documents into chunks.
     ---
     tags:
@@ -690,7 +690,7 @@ def parse(tenant_id, dataset_id):
         doc["tenant_id"] = tenant_id
         # [对于文件上传得到的文档而言]获取文件在minio中的存储地址name和文件桶名【知识库id】
         bucket, name = File2DocumentService.get_storage_address(doc_id=doc["id"])
-        # 基于文档记录、minio桶名、minio文件存储地址，创建任务，放入队列
+        # 基于文档记录、minio桶名、minio文件存储地址【minio参数是为了获取文件，以便获取页数或行数，进行分情况的任务创建】，创建任务列表，批量保存任务列表，更新文档记录【progress字段为0-1的随机小数-->触发启动脚本ragflow_server中的update_progress操作【该操作】】，最终将任务记录依次放入redis中的消息队列
         queue_tasks(doc, bucket, name)
         # =========生成任务，放入队列-end========
     return get_result()

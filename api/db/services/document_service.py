@@ -150,7 +150,7 @@ class DocumentService(CommonService):
             - status=='1'
             - type!='virtual'
             - 0<process<1
-        问题：在上传文件操作中，初始化文档信息时，数据表document的process字段默认值为0【因此不在ragflow_server中update_process的处理范围之内】，status字段默认值为'1'，run字段默认值为'0'。TODO 那么，在什么时候文档满足未处理完成的查询条件呢？注意ragflow系统，文档解析是手动触发的，也即有专门的接口触发文档解析操作，推测生成了任务
+        问题：在上传文件操作中，初始化文档信息时，数据表document的process字段默认值为0【因此不在ragflow_server中update_process的处理范围之内】，status字段默认值为'1'，run字段默认值为'0'。TODO 那么，在什么时候文档满足未处理完成的查询条件呢？注意ragflow系统，文档解析是手动触发的，也即有专门的接口触发文档解析操作，推测生成了任务.答：我的推测正确，在手动触发解析时，最终更新文档记录的progress为0-1之间的正小数
         """
         fields = [cls.model.id, cls.model.process_begin_at, cls.model.parser_config, cls.model.progress_msg,
                   cls.model.run]
@@ -340,6 +340,7 @@ class DocumentService(CommonService):
     @classmethod
     @DB.connection_context()
     def begin2parse(cls, docid):
+        # 更新文档记录：progress【随机正小数0.0****， 0-1之间】、progress_msg、process_begin_at
         cls.update_by_id(
             docid, {"progress": random.random() * 1 / 100.,
                     "progress_msg": "Task is queued...",
@@ -373,7 +374,7 @@ class DocumentService(CommonService):
                 # 查询当前文档信息
                 e, doc = DocumentService.get_by_id(d["id"])
                 status = doc.run  # TaskStatus.RUNNING.value
-                # 遍历当前文档的任务列表，统计完成状态finished、prg【处理成功数量？该指标不是整数】,处理信息列表和处理失败数量
+                # 遍历当前文档的任务列表，统计完成状态finished、prg【收集任务处理进度？该指标不是整数】,处理信息列表和处理失败数量
                 for t in tsks:
                     if 0 <= t.progress < 1:
                         # 0 表示未处理完成

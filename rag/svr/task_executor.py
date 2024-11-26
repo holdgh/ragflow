@@ -139,10 +139,12 @@ def collect():
     思考：
         - 1个队列【这里设定了一个队列rag_flow_svr_queue】-->多个组【这里设定了一个组rag_flow_svr_task_broker】-->多个消费者【这里设定一个消费者task_consumer_0】
         - 一个消费者-->多个数据【这里视为pendings，每一个pending对应一个msg_id】
-        - 1个队列-->多个msg_id
+        - 1个队列-->多个msg_id【根据手动触发操作可知，msg就是task记录】
         - 1个msg_id-->【多个】msg【这里取第一个msg构造负载数据】
-        - 1个msg-->1个payload-->1个task记录-->1个doc记录
-        问题：pendings从哪里来？msg_id与task的关系？TODO 注意在ragflow_server.py中的update_progress操作处，存在创建任务并插入redis数据的操作。
+        - 1个msg-->1个payload-->1个task记录
+        - 1个doc记录-->多个task记录
+        问题：pendings从哪里来？msg_id与task的关系？
+        回答：在ragflow_server.py中的update_progress操作处，存在创建任务【仅限raptor任务】并插入redis数据的操作。在手动触发解析操作中，最终把生成的任务列表依次放入了redis中的消息队列
     """
     global CONSUMER_NAME, PAYLOAD, DONE_TASKS, FAILED_TASKS
     try:

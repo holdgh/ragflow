@@ -137,6 +137,9 @@ class TaskService(CommonService):
 
 
 def queue_tasks(doc: dict, bucket: str, name: str):
+    """
+    功能：基于文档记录，分情况创建任务列表，批量保存任务列表，更新文档记录progress字段为0-1之间的正小数【触发启动脚本ragflow_server的update_progress】，将任务记录依次放入redis中的消息队列
+    """
     def new_task():
         return {
             "id": get_uuid(),
@@ -192,9 +195,10 @@ def queue_tasks(doc: dict, bucket: str, name: str):
     else:
         # 其他情况，直接创建任务
         tsks.append(new_task())
-    # 将任务列表保存到数据库
+    # 将任务列表批量保存到数据库
     bulk_insert_into_db(Task, tsks, True)
+    # 更新文档记录：progress【随机正小数，0-1之间，0.0****】
     DocumentService.begin2parse(doc["id"])
-
+    # 将任务列表，依次放入redis中的消息队列
     for t in tsks:
         assert REDIS_CONN.queue_product(SVR_QUEUE_NAME, message=t), "Can't access Redis. Please check the Redis' status."

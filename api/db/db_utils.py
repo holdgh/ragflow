@@ -27,7 +27,7 @@ from api.db.db_models import DB, DataBaseModel
 @DB.connection_context()
 def bulk_insert_into_db(model, data_source, replace_on_conflict=False):
     DB.create_tables([model])
-
+    # 设置数据记录的创建时间和更新时间字段
     for i, data in enumerate(data_source):
         current_time = current_timestamp() + i
         current_date = timestamp_to_date(current_time)
@@ -36,18 +36,22 @@ def bulk_insert_into_db(model, data_source, replace_on_conflict=False):
         data['create_date'] = timestamp_to_date(data['create_time'])
         data['update_time'] = current_time
         data['update_date'] = current_date
-
+    # 数据记录的字段集合与{'create_time', 'create_date'}取差集，转成元组
     preserve = tuple(data_source[0].keys() - {'create_time', 'create_date'})
 
     batch_size = 1000
 
     for i in range(0, len(data_source), batch_size):
+        # 每次插入1000条
         with DB.atomic():
             query = model.insert_many(data_source[i:i + batch_size])
             if replace_on_conflict:
+                # 冲突：主键或唯一索引等
                 if isinstance(DB, PooledMySQLDatabase):
+                    # MySQL数据库，对preserve集合中字段冲突进行处理
                     query = query.on_conflict(preserve=preserve)
                 else:
+                    # 非MySQL数据库，仅对id字段冲突进行处理
                     query = query.on_conflict(conflict_target="id", preserve=preserve)
             query.execute()
 
