@@ -29,6 +29,9 @@ from api.utils.api_utils import get_result
 @manager.route('/chats', methods=['POST'])
 @token_required
 def create(tenant_id):
+    """
+    功能：创建聊天助手
+    """
     req=request.json
     ids= req.get("dataset_ids")
     if not ids:

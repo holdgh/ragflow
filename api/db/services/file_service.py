@@ -392,7 +392,7 @@ class FileService(CommonService):
             files：对应入参文件列表的文档记录列表
         """
         # =========查询用户文件结构-start=========
-        # 获取特定用户的文件记录【字典形式，一个】
+        # 获取特定用户的root文件记录【字典形式，一个】
         root_folder = self.get_root_folder(user_id)
         # 获取id
         pf_id = root_folder["id"]

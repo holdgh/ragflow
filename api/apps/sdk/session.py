@@ -33,6 +33,9 @@ from api.utils.api_utils import get_result, token_required
 @manager.route('/chats/<chat_id>/sessions', methods=['POST'])
 @token_required
 def create(tenant_id,chat_id):
+    """
+    功能：利用聊天助手创建对话
+    """
     req = request.json
     req["dialog_id"] = chat_id
     dia = DialogService.query(tenant_id=tenant_id, id=req["dialog_id"], status=StatusEnum.VALID.value)
@@ -108,6 +111,9 @@ def update(tenant_id,chat_id,session_id):
 @manager.route('/chats/<chat_id>/completions', methods=['POST'])
 @token_required
 def completion(tenant_id, chat_id):
+    """
+    功能：利用聊天助手进行对话
+    """
     req = request.json
     if not req.get("session_id"):
         conv = {
