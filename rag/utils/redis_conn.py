@@ -15,7 +15,7 @@ class Payload:
         self.__message = json.loads(message['message'])
 
     def ack(self):
-        # 消费者向队列回复"我收到了数据【msg_id】"
+        # 消费者向队列回复"我收到了数据【msg_id】，我已经处理了数据"
         try:
             self.__consumer.xack(self.__queue_name, self.__group_name, self.__msg_id)
             return True

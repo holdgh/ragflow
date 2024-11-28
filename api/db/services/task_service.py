@@ -139,6 +139,8 @@ class TaskService(CommonService):
 def queue_tasks(doc: dict, bucket: str, name: str):
     """
     功能：基于文档记录，分情况创建任务列表，批量保存任务列表，更新文档记录progress字段为0-1之间的正小数【触发启动脚本ragflow_server的update_progress】，将任务记录依次放入redis中的消息队列
+    思考：
+        1、此处生成的任务记录不含type字段设置，也即没有raptor
     """
     def new_task():
         return {

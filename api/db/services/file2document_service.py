@@ -70,6 +70,9 @@ class File2DocumentService(CommonService):
     @classmethod
     @DB.connection_context()
     def get_storage_address(cls, doc_id=None, file_id=None):
+        """
+        功能：获取file2Document记录，据此获取文件记录，以获取【本地来源的文件返回parent_id和location】知识库id和minio中的文件地址
+        """
         # 查询file2Document记录【文档id非空，用文档id查；文档id为空，用文件id查】
         if doc_id:
             f2d = cls.get_by_document_id(doc_id)

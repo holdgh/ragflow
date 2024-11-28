@@ -372,6 +372,12 @@ class Dealer:
         return tbl
 
     def chunk_list(self, doc_id: str, tenant_id: str, kb_ids: list[str], max_count=1024, fields=["docnm_kwd", "content_with_weight", "img_id"]):
+        """
+        功能：检索对应fields字段集的数据列表，条件：doc_id，知识库id列表、用户id
+        备注：
+            1、当前采用的dataStore为ESConnection
+            2、数据列表尺寸为max_count
+        """
         condition = {"doc_id": doc_id}
         res = self.dataStore.search(fields, [], condition, [], OrderByExpr(), 0, max_count, index_name(tenant_id), kb_ids)
         dict_chunks = self.dataStore.getFields(res, fields)

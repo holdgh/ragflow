@@ -75,6 +75,7 @@ class TaskStatus(StrEnum):
 
 
 class ParserType(StrEnum):
+    # 解析类型枚举
     PRESENTATION = "presentation"
     LAWS = "laws"
     MANUAL = "manual"

@@ -150,7 +150,7 @@ class DocumentService(CommonService):
             - status=='1'
             - type!='virtual'
             - 0<process<1
-        问题：在上传文件操作中，初始化文档信息时，数据表document的process字段默认值为0【因此不在ragflow_server中update_process的处理范围之内】，status字段默认值为'1'，run字段默认值为'0'。TODO 那么，在什么时候文档满足未处理完成的查询条件呢？注意ragflow系统，文档解析是手动触发的，也即有专门的接口触发文档解析操作，推测生成了任务.答：我的推测正确，在手动触发解析时，最终更新文档记录的progress为0-1之间的正小数
+        问题：在上传文件操作中，初始化文档信息时，数据表document的process字段默认值为0【因此不在ragflow_server中update_process的处理范围之内】，status字段默认值为'1'，run字段默认值为'0'。那么，在什么时候文档满足未处理完成的查询条件呢？注意ragflow系统，文档解析是手动触发的，也即有专门的接口触发文档解析操作，推测生成了任务.答：我的推测正确，在手动触发解析时，最终更新文档记录的progress为0-1之间的正小数
         """
         fields = [cls.model.id, cls.model.process_begin_at, cls.model.parser_config, cls.model.progress_msg,
                   cls.model.run]
@@ -165,6 +165,7 @@ class DocumentService(CommonService):
     @classmethod
     @DB.connection_context()
     def increment_chunk_num(cls, doc_id, kb_id, token_num, chunk_num, duation):
+        # 将文档解析数据维护到文档记录中
         num = cls.model.update(token_num=cls.model.token_num + token_num,
                                chunk_num=cls.model.chunk_num + chunk_num,
                                process_duation=cls.model.process_duation + duation).where(
@@ -172,6 +173,7 @@ class DocumentService(CommonService):
         if num == 0:
             raise LookupError(
                 "Document not found which is supposed to be there")
+        # 将文档解析数据更新知识库中
         num = Knowledgebase.update(
             token_num=Knowledgebase.token_num +
                       token_num,
@@ -354,9 +356,10 @@ class DocumentService(CommonService):
         1、查询未处理完成的文档列表
         2、逐一处理：
             - 1、查询当前文档任务列表，为空则处理下一个文档
-            - 2、查询当前文档信息
-            - 3、遍历任务列表，统计完成状态finished、prg【处理成功数量？】,处理信息列表msg和处理失败数量bad
-            - 4、根据任务列表上述统计字段，更新文档处理相关字段：process_duation、run、progress、progress_msg
+            - 2、遍历任务列表，统计完成状态finished、prg【处理成功数量？】,处理信息列表msg和处理失败数量bad
+            - 3、根据任务列表上述统计字段，更新文档处理相关字段：process_duation、run、progress、progress_msg
+        思考：
+            1、【在task_executor处理任务后，不是有对progress的更新吗？task_executor中更新的是任务记录的progress】为什么要有专门的progress更新操作？对于涉及生成raptor任务的doc记录而言，这里更新了doc记录的progress_msg字段【含有'------ RAPTOR -------'】
         """
         # 查询未处理完成的文档信息
         docs = cls.get_unfinished_docs()
@@ -393,12 +396,12 @@ class DocumentService(CommonService):
                     prg = -1
                     status = TaskStatus.FAIL.value
                 elif finished:
-                    # 若处理完成且不存在失败任务
+                    # 若处理完成且不存在失败任务【说明只有当非raptor任务处理完成时，才会生成raptor任务】
                     if d["parser_config"].get("raptor", {}).get("use_raptor") and d["progress_msg"].lower().find(
                             " raptor") < 0:
-                        # 若文档parser_config字段的raptor字段存在非空字段use_raptor且文档progress_msg字段的小写模式存在raptor字符串，则：
+                        # 若文档parser_config字段的raptor字段存在非空字段use_raptor且文档progress_msg字段的小写模式不存在raptor字符串，则：
                         # 1、创建指定文档的“组织树检索的递归抽象处理”任务，并插入数据库，插入redis消息队列rag_flow_svr_queue，redis插入失败，则抛出异常
-                        # 2、重新设置文档的prg值，并在文档progress_msg字段追加"------ RAPTOR -------"
+                        # 2、重新设置文档的prg值，并在文档progress_msg字段追加"------ RAPTOR -------"，表示文档存在raptor任务
                         queue_raptor_tasks(d)
                         prg = 0.98 * len(tsks) / (len(tsks) + 1)
                         msg.append("------ RAPTOR -------")
@@ -455,7 +458,7 @@ def queue_raptor_tasks(doc):
     # 创建任务，并插入任务
     task = new_task()
     bulk_insert_into_db(Task, [task], True)
-    # 设置任务type字段为raptor，并将任务放入redis消息队列rag_flow_svr_queue中【若插入队列不成功，则抛出异常】
+    # 【注意任务没有type字段，这里是为了追加type字段，标识当前任务是raptor任务，后续处理任务时，选用raptor任务处理逻辑】设置任务type字段为raptor，并将任务放入redis消息队列rag_flow_svr_queue中【若插入队列不成功，则抛出异常】
     task["type"] = "raptor"
     assert REDIS_CONN.queue_product(SVR_QUEUE_NAME, message=task), "Can't access Redis. Please check the Redis' status."
 

@@ -168,6 +168,7 @@ def init_settings():
 
     global DOC_ENGINE, docStoreConn, retrievaler, kg_retrievaler
     # 从环境变量中获取DOC_ENGINE信息，以此来初始化全局变量docStoreConn对象【存储工具，是ES还是infinity】
+    # 根据docker/.env文件可知，采用ES存储
     DOC_ENGINE = os.environ.get('DOC_ENGINE', "elasticsearch")
     if DOC_ENGINE == "elasticsearch":
         docStoreConn = rag.utils.es_conn.ESConnection()
