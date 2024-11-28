@@ -30,36 +30,47 @@ from api.utils.api_utils import get_result
 @token_required
 def create(tenant_id):
     """
-    功能：创建聊天助手
+    功能：创建聊天助手【关联知识库、提示词、检索参数、大模型及超参数】
     """
+    # ============检验知识库入参-start============
     req=request.json
     ids= req.get("dataset_ids")
     if not ids:
+        # 知识库id列表为空
         return get_error_data_result(message="`dataset_ids` is required")
     for kb_id in ids:
         kbs = KnowledgebaseService.accessible(kb_id=kb_id,user_id=tenant_id)
         if not kbs:
+            # 当前用户不存在当前知识库
             return get_error_data_result(f"You don't own the dataset {kb_id}")
         kbs = KnowledgebaseService.query(id=kb_id)
         kb = kbs[0]
         if kb.chunk_num == 0:
+            # 当前知识库没有解析完成的文件【在task_executor中解析处理完成，会将文件分块数量维护到对应的文档和知识库记录】
             return get_error_data_result(f"The dataset {kb_id} doesn't own parsed file")
     kbs = KnowledgebaseService.get_by_ids(ids)
     embd_count = list(set([kb.embd_id for kb in kbs]))
     if len(embd_count) != 1:
+        # 一个知识库只能有一个embedding模型
         return get_result(message='Datasets use different embedding models."',code=settings.RetCode.AUTHENTICATION_ERROR)
     req["kb_ids"] = ids
+    # ============检验知识库入参-end============
+    # ============检验大模型和用户入参-start============
     # llm
     llm = req.get("llm")
     if llm:
         if "model_name" in llm:
             req["llm_id"] = llm.pop("model_name")
+            # 校验大模型服务是否存在
             if not TenantLLMService.query(tenant_id=tenant_id,llm_name=req["llm_id"],model_type="chat"):
                 return get_error_data_result(f"`model_name` {req.get('llm_id')} doesn't exist")
         req["llm_setting"] = req.pop("llm")
+    # 校验用户是否存在
     e, tenant = TenantService.get_by_id(tenant_id)
     if not e:
         return get_error_data_result(message="Tenant not found!")
+    # ============检验大模型和用户入参-end============
+    # ============提示词处理-start============
     # prompt
     prompt = req.get("prompt")
     key_mapping = {"parameters": "variables",
@@ -68,36 +79,55 @@ def create(tenant_id):
                    "system": "prompt",
                    "rerank_id": "rerank_model",
                    "vector_similarity_weight": "keywords_similarity_weight"}
+    # 对于similarity_threshold，官方demo解释：我们使用混合相似度得分来评估两行文本之间的距离。 它是加权关键词相似度和向量余弦相似度。 如果查询和块之间的相似度小于此阈值，则该块将被过滤掉。
+    # 对于vector_similarity_weight，官方demo解释：我们使用混合相似性评分来评估两行文本之间的距离。它是加权关键字相似性和矢量余弦相似性或rerank得分（0〜1）。两个权重的总和为1.0。
     key_list = ["similarity_threshold", "vector_similarity_weight", "top_n", "rerank_id"]
     if prompt:
+        # 入参中的提示词非空时
+        # 基于key_mapping替换提示词入参字段名
         for new_key, old_key in key_mapping.items():
             if old_key in prompt:
                 prompt[new_key] = prompt.pop(old_key)
+        # 基于key_list提取prompt中的指定字段到req中
         for key in key_list:
             if key in prompt:
                 req[key] = prompt.pop(key)
+        # 将入参中的提示词字段名置为prompt_config
         req["prompt_config"] = req.pop("prompt")
+    # ============提示词处理-end============
+    # ============助理记录其他字段初始化-start============
     # init
+    # 随机id
     req["id"] = get_uuid()
+    # 助理描述
     req["description"] = req.get("description", "A helpful Assistant")
+    # 助理头像
     req["icon"] = req.get("avatar", "")
+    # 官方demo对top_n参数的解释：并非所有相似度得分高于“相似度阈值”的块都会被提供给大语言模型。 LLM 只能看到这些“Top N”块
     req["top_n"] = req.get("top_n", 6)
+    # TODO 在页面入参中找不到top_k参数
     req["top_k"] = req.get("top_k", 1024)
+    # 校验rerank模型是否存在
     req["rerank_id"] = req.get("rerank_id", "")
     if req.get("rerank_id"):
         if not TenantLLMService.query(tenant_id=tenant_id,llm_name=req.get("rerank_id"),model_type="rerank"):
             return get_error_data_result(f"`rerank_model` {req.get('rerank_id')} doesn't exist")
+    # 入参中没有大模型时，取用户记录的默认大模型
     if not req.get("llm_id"):
         req["llm_id"] = tenant.llm_id
+    # 检验助理名称是否传值，是否在数据库中已存在
     if not req.get("name"):
         return get_error_data_result(message="`name` is required.")
     if DialogService.query(name=req["name"], tenant_id=tenant_id, status=StatusEnum.VALID.value):
         return get_error_data_result(message="Duplicated chat name in creating chat.")
     # tenant_id
+    # 校验用户id是否传值
     if req.get("tenant_id"):
         return get_error_data_result(message="`tenant_id` must not be provided.")
+    # TODO 此处多余？
     req["tenant_id"] = tenant_id
     # prompt more parameter
+    # 设置提示词
     default_prompt = {
         "system": """You are an intelligent assistant. Please summarize the content of the knowledge base to answer the question. Please list the data in the knowledge base and answer in detail. When all knowledge base content is irrelevant to the question, your answer must include the sentence "The answer you are looking for is not found in the knowledge base!" Answers need to consider chat history.
       Here is the knowledge base:
@@ -109,45 +139,62 @@ def create(tenant_id):
         ],
         "empty_response": "Sorry! No relevant content was found in the knowledge base!"
     }
+    # 提示词涉及：系统提示词、提示语、关键参数、无法回答时的默认回复
     key_list_2 = ["system", "prologue", "parameters", "empty_response"]
+    # 未设置提示词时，采用默认提示词
     if "prompt_config" not in req:
         req['prompt_config'] = {}
     for key in key_list_2:
         temp = req['prompt_config'].get(key)
         if not temp:
+            # 未设置提示词的指定项时，采用默认提示词的指定项
             req['prompt_config'][key] = default_prompt[key]
+    # 处理关键参数
     for p in req['prompt_config']["parameters"]:
+        # 过滤可选标记
         if p["optional"]:
             continue
+        # 如果系统提示词中没有关键参数字段“类似，{knowledge}”，则抛出异常
         if req['prompt_config']["system"].find("{%s}" % p["key"]) < 0:
             return get_error_data_result(
                 message="Parameter '{}' is not used".format(p["key"]))
+    # ============助理记录其他字段初始化-end============
     # save
+    # 保存助理记录
     if not DialogService.save(**req):
         return get_error_data_result(message="Fail to new a chat!")
     # response
+    # ===========构造返回值【多为字段转换逻辑】-start===========
+    # 查询助理记录
     e, res = DialogService.get_by_id(req["id"])
     if not e:
         return get_error_data_result(message="Fail to new a chat!")
     res = res.to_json()
     renamed_dict = {}
+    # 基于key_mapping转换字段名
     for key, value in res["prompt_config"].items():
         new_key = key_mapping.get(key, key)
         renamed_dict[new_key] = value
+    # 收集转换结果到prompt字段
     res["prompt"] = renamed_dict
+    # 删除原始字段
     del res["prompt_config"]
     new_dict = {"similarity_threshold": res["similarity_threshold"],
                 "keywords_similarity_weight": res["vector_similarity_weight"],
                 "top_n": res["top_n"],
                 "rerank_model": res['rerank_id']}
+    # 将new_dict保存或更新到res的prompt中
     res["prompt"].update(new_dict)
+    # 删除上述new_dict涉及的原始字段
     for key in key_list:
         del res[key]
+    # 其他字段转换
     res["llm"] = res.pop("llm_setting")
     res["llm"]["model_name"] = res.pop("llm_id")
     del res["kb_ids"]
     res["dataset_ids"] = req["dataset_ids"]
     res["avatar"] = res.pop("icon")
+    # ===========构造返回值【多为字段转换逻辑】-end===========
     return get_result(data=res)
 
 @manager.route('/chats/<chat_id>', methods=['PUT'])

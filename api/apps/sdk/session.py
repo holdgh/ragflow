@@ -114,51 +114,70 @@ def completion(tenant_id, chat_id):
     """
     功能：利用聊天助手进行对话
     """
+    # =========入参校验-start========
     req = request.json
     if not req.get("session_id"):
+        # 入参中不存在session_id时
+        # 初始化会话记录
         conv = {
             "id": get_uuid(),
             "dialog_id": chat_id,
             "name": req.get("name", "New session"),
+            # 会话message字段是列表
             "message": [{"role": "assistant", "content": "Hi! I am your assistant，can I help you?"}]
         }
+        # 会话名称字段必填
         if not conv.get("name"):
             return get_error_data_result(message="`name` can not be empty.")
+        # 保存会话【表示一个对话窗口】记录
         ConversationService.save(**conv)
+        # 查询会话记录
         e, conv = ConversationService.get_by_id(conv["id"])
         session_id=conv.id
     else:
         session_id = req.get("session_id")
+    # 用户问题必填
     if not req.get("question"):
         return get_error_data_result(message="Please input your question.")
+    # 对应助理的会话记录必须存在
     conv = ConversationService.query(id=session_id,dialog_id=chat_id)
     if not conv:
         return get_error_data_result(message="Session does not exist")
     conv = conv[0]
+    # 用户须可用当前助理
     if not DialogService.query(id=chat_id, tenant_id=tenant_id, status=StatusEnum.VALID.value):
         return get_error_data_result(message="You do not own the chat")
+    # =========入参校验-end========
+    # ==========构建会话记录对于当前用户问题的chat入参数据-start==========
     msg = []
+    # 创建用户当前问题
     question = {
         "content": req.get("question"),
         "role": "user",
         "id": str(uuid4())
     }
+    # 将用户问题收集到会话记录的message字段中
     conv.message.append(question)
+    # 收集会话记录的用户问题到msg【当前用户问题处于msg的最后一个元素】
     for m in conv.message:
         if m["role"] == "system": continue
         if m["role"] == "assistant" and not msg: continue
         msg.append(m)
+    # 取当前用户问题id字段
     message_id = msg[-1].get("id")
+    # 获取助理记录
     e, dia = DialogService.get_by_id(conv.dialog_id)
-
+    # TODO 初始化会话记录中当前问题的助理数据{"role": "assistant", "content": "", "id": message_id}和检索数据{"chunks": [], "doc_aggs": []}
     if not conv.reference:
         conv.reference = []
     conv.message.append({"role": "assistant", "content": "", "id": message_id})
     conv.reference.append({"chunks": [], "doc_aggs": []})
-
+    # ==========构建会话记录对于当前用户问题的chat入参数据-start==========
     def fillin_conv(ans):
+        # 获取检索数据
         reference = ans["reference"]
         if "chunks" in reference:
+            # 重构检索数据
             chunks = reference.get("chunks")
             chunk_list = []
             for chunk in chunks:
@@ -178,11 +197,15 @@ def completion(tenant_id, chat_id):
             reference["chunks"] = chunk_list
         nonlocal conv, message_id
         if not conv.reference:
+            # 会话记录中的检索数据为空时，将当前答案的检索数据追加到会话记录的reference字段
             conv.reference.append(ans["reference"])
         else:
+            # 会话记录中的检索数据非空时，将当前答案的检索数据更新到会话记录的reference字段的最后一条【TODO 说明会话记录的reference字段只有一条数据？】
             conv.reference[-1] = ans["reference"]
+        # 更新会话记录中当前问题的助理数据
         conv.message[-1] = {"role": "assistant", "content": ans["answer"],
                             "id": message_id, "prompt": ans.get("prompt", "")}
+        # 为当前答案设置当前用户问题id和会话记录id
         ans["id"] = message_id
         ans["session_id"]=session_id
 
@@ -191,6 +214,7 @@ def completion(tenant_id, chat_id):
         try:
             for ans in chat(dia, msg, **req):
                 fillin_conv(ans)
+                # 每得到一次答案，返回一次结果
                 yield "data:" + json.dumps({"code": 0,  "data": ans}, ensure_ascii=False) + "\n\n"
             ConversationService.update_by_id(conv.id, conv.to_dict())
         except Exception as e:
@@ -198,8 +222,9 @@ def completion(tenant_id, chat_id):
                                         "data": {"answer": "**ERROR**: " + str(e),"reference": []}},
                                        ensure_ascii=False) + "\n\n"
         yield "data:" + json.dumps({"code": 0, "data": True}, ensure_ascii=False) + "\n\n"
-
+    # =======回答-start=======
     if req.get("stream", True):
+        # 流式回答时
         resp = Response(stream(), mimetype="text/event-stream")
         resp.headers.add_header("Cache-control", "no-cache")
         resp.headers.add_header("Connection", "keep-alive")
@@ -209,13 +234,18 @@ def completion(tenant_id, chat_id):
         return resp
 
     else:
+        # 非流式回答时
         answer = None
+        # 遍历收集最终答案
+        # 依据助理记录和当前会话的用户问题及入参进行问答操作获取答案
         for ans in chat(dia, msg, **req):
             answer = ans
+            # 根据当前答案更新会话记录
             fillin_conv(ans)
             ConversationService.update_by_id(conv.id, conv.to_dict())
             break
         return get_result(data=answer)
+    # =======回答-end=======
 
 
 @manager.route('/agents/<agent_id>/completions', methods=['POST'])

@@ -129,8 +129,10 @@ def llm_id2llm_type(llm_id):
 
 
 def chat(dialog, messages, stream=True, **kwargs):
+    # 断言messages最后一个元素为用户问题
     assert messages[-1]["role"] == "user", "The last content of this conversation is not from user."
     st = timer()
+    # 获取大模型记录
     tmp = dialog.llm_id.split("@")
     fid = None
     llm_id = tmp[0]
@@ -142,36 +144,41 @@ def chat(dialog, messages, stream=True, **kwargs):
             TenantLLMService.query(tenant_id=dialog.tenant_id, llm_name=llm_id, llm_factory=fid)
         if not llm:
             raise LookupError("LLM(%s) not found" % dialog.llm_id)
+        # 默认最大token数
         max_tokens = 8192
     else:
         max_tokens = llm[0].max_tokens
+    # 获取知识库记录
     kbs = KnowledgebaseService.get_by_ids(dialog.kb_ids)
+    # 要求所选知识库使用统一的embedding模型
     embd_nms = list(set([kb.embd_id for kb in kbs]))
     if len(embd_nms) != 1:
         yield {"answer": "**ERROR**: Knowledge bases use different embedding models.", "reference": []}
         return {"answer": "**ERROR**: Knowledge bases use different embedding models.", "reference": []}
-
+    # 根据知识库的解析类型获取检索器
     is_kg = all([kb.parser_id == ParserType.KG for kb in kbs])
     retr = settings.retrievaler if not is_kg else settings.kg_retrievaler
-
+    # 取包含当前问题和2个历史对话的问题
     questions = [m["content"] for m in messages if m["role"] == "user"][-3:]
+    # 取对话入参中的文档记录id列表
     attachments = kwargs["doc_ids"].split(",") if "doc_ids" in kwargs else None
     if "doc_ids" in messages[-1]:
         attachments = messages[-1]["doc_ids"]
         for m in messages[:-1]:
             if "doc_ids" in m:
                 attachments.extend(m["doc_ids"])
-
+    # 获取embedding模型
     embd_mdl = LLMBundle(dialog.tenant_id, LLMType.EMBEDDING, embd_nms[0])
     if not embd_mdl:
         raise LookupError("Embedding model(%s) not found" % embd_nms[0])
-
+    # 获取chat模型
     if llm_id2llm_type(dialog.llm_id) == "image2text":
         chat_mdl = LLMBundle(dialog.tenant_id, LLMType.IMAGE2TEXT, dialog.llm_id)
     else:
         chat_mdl = LLMBundle(dialog.tenant_id, LLMType.CHAT, dialog.llm_id)
-
+    # 获取助理记录的提示词配置数据
     prompt_config = dialog.prompt_config
+    # 获取所选知识库解析配置parser_config中的filed_map数据
     field_map = KnowledgebaseService.get_field_map(dialog.kb_ids)
     tts_mdl = None
     if prompt_config.get("tts"):
@@ -237,6 +244,7 @@ def chat(dialog, messages, stream=True, **kwargs):
                 for m in messages if m["role"] != "system"])
     used_token_count, msg = message_fit_in(msg, int(max_tokens * 0.97))
     assert len(msg) >= 2, f"message_fit_in has bug: {msg}"
+    # 构造提示词
     prompt = msg[0]["content"]
     prompt += "\n\n### Query:\n%s" % " ".join(questions)
 

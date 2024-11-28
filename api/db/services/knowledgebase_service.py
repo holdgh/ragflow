@@ -181,6 +181,7 @@ class KnowledgebaseService(CommonService):
     @classmethod
     @DB.connection_context()
     def accessible(cls, kb_id, user_id):
+        # 关联查询用户对应的指定知识库记录是否存在
         docs = cls.model.select(
             cls.model.id).join(UserTenant, on=(UserTenant.tenant_id == Knowledgebase.tenant_id)
             ).where(cls.model.id == kb_id, UserTenant.user_id == user_id).paginate(0, 1)
