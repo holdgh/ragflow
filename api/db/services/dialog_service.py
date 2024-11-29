@@ -132,13 +132,29 @@ def chat(dialog, messages, stream=True, **kwargs):
     """
     功能：聊天对话，回答用户问题
     逻辑：
-        1、
-        2、
-        3、
-        4、
-        5、
+        1、获取问答逻辑所需数据
+            - 获取大模型记录及max_tokens【输入和输出的总和】
+            - 获取知识库和检索器
+            - 获取文档id列表【附件列表】
+            - 获取embedding模型和chat模型
+            - 获取助理记录的提示配置【TODO tts模型是干啥的？】和知识库的解析配置【field_map字段】
+        2、依据field_map字段，分情况问答处理：
+            - 具备field_map字段时，TODO 执行基于SQL的检索回答逻辑
+            - 不具备field_map字段时，执行基于检索器的检索回答逻辑
+                1、助理记录提示配置的关键参数处理【不可选时，对话入参必传校验；可选时，从系统提示词中去除关键参数占位符】
+                2、基于对话历史和多轮对话设置，进行问题重构。接着获取rerank模型
+                3、基于助理记录提示配置的关键参数是否包含knowledge，分情况处理检索
+                    - 关键参数不包含knowledge时，设置检索内容为空
+                    - 关键参数包含knowledge时，进行以下处理：
+                        1、对当前问题进行关键词提取【由助理记录提示配置中的keyword是否为true来决定】，并将关键词追加到当前问题中
+                        2、基于--用户问题【可能含有关键字】、embedding模型、用户id列表、助理记录关联的知识库id列表及其他配置、附件列表、rerank模型--TODO 进行检索
+                4、判断检索结果是否为空：
+                    - 检索不到内容，基于助理记录提示配置的空回复，进行回答
+                    - 检索内容非空：
+                        1、基于检索内容和重构问题构造提示词，并进行关于模型token数量限制的处理，同步计算输出token限制数量。
+                        2、基于chat模型和提示词【检索内容和用户问题】、对话历史【计算token数量限制时，考虑了对话历史】、助理记录大模型配置进行问答【区分流式和非流式】
     """
-    # ===========获取问题和大模型-start==========
+    # ===========获取大模型-start==========
     # 断言messages最后一个元素为用户问题
     assert messages[-1]["role"] == "user", "The last content of this conversation is not from user."
     st = timer()
@@ -158,7 +174,7 @@ def chat(dialog, messages, stream=True, **kwargs):
         max_tokens = 8192
     else:
         max_tokens = llm[0].max_tokens
-    # ===========获取问题和大模型-end==========
+    # ===========获取大模型-end==========
     # ===========获取知识库和检索器-start==========
     # 获取知识库记录
     kbs = KnowledgebaseService.get_by_ids(dialog.kb_ids)
@@ -247,6 +263,7 @@ def chat(dialog, messages, stream=True, **kwargs):
     # TODO 经过重构问题后，这里是干啥？
     for _ in range(len(questions) // 2):
         questions.append(questions[-1])
+    # ============基于助理记录提示配置的关键参数是否包含knowledge，分情况处理检索-start=============
     if "knowledge" not in [p["key"] for p in prompt_config["parameters"]]:
         # 助理记录提示配置的关键参数列表中不含knowledge时，设置知识库检索结果为空
         kbinfos = {"total": 0, "chunks": [], "doc_aggs": []}
@@ -266,6 +283,8 @@ def chat(dialog, messages, stream=True, **kwargs):
                                         dialog.vector_similarity_weight,
                                         doc_ids=attachments,
                                         top=dialog.top_k, aggs=False, rerank_mdl=rerank_mdl)
+    # ============基于助理记录提示配置的关键参数是否包含knowledge，分情况处理检索-end=============
+    # ============检索不到内容时的空回复-start=============
     # 依据检索结果构造知识库检索内容列表
     knowledges = [ck["content_with_weight"] for ck in kbinfos["chunks"]]
     logging.debug(
@@ -277,6 +296,8 @@ def chat(dialog, messages, stream=True, **kwargs):
         empty_res = prompt_config["empty_response"]
         yield {"answer": empty_res, "reference": kbinfos, "audio_binary": tts(tts_mdl, empty_res)}
         return {"answer": prompt_config["empty_response"], "reference": kbinfos}
+    # ============检索不到内容时的空回复-end=============
+    # =========基于检索内容和重构问题构造提示词，并进行关于模型token数量限制的处理，同步计算输出token限制数量-start==========
     # 将检索内容放入对话入参中的knowledge字段【这里就是关键参数knowledge的作用】
     kwargs["knowledge"] = "\n\n------\n\n".join(knowledges)
     # 获取助理记录中的大模型设置
@@ -299,7 +320,7 @@ def chat(dialog, messages, stream=True, **kwargs):
         gen_conf["max_tokens"] = min(
             gen_conf["max_tokens"],
             max_tokens - used_token_count)
-
+    # =========基于检索内容和重构问题构造提示词，并进行关于模型token数量限制的处理，同步计算输出token限制数量-end==========
     def decorate_answer(answer):
         nonlocal prompt_config, knowledges, kwargs, kbinfos, prompt, retrieval_tm
         refs = []
@@ -331,7 +352,7 @@ def chat(dialog, messages, stream=True, **kwargs):
             (done_tm - retrieval_tm) * 1000)
         return {"answer": answer, "reference": refs, "prompt": prompt}
 
-    # 基于chat模型和提示词【检索内容和用户问题】、对话历史、助理记录大模型配置进行问答【区分流式和非流式、】
+    # 基于chat模型和提示词【检索内容和用户问题】、对话历史、助理记录大模型配置进行问答【区分流式和非流式】
     if stream:
         last_ans = ""
         answer = ""

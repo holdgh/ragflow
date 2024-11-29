@@ -115,7 +115,7 @@ def completion(tenant_id, chat_id):
     功能：利用聊天助手进行对话
     逻辑：
         1、入参校验【会话【聊天窗口】、问题、用户与助理的关系合法性】
-        2、构建会话记录对于当前用户问题的chat入参数据
+        2、获取会话中的对话历史和初始化当前问题的回复和检索结果为空
         3、调用dialog_service的chat逻辑，进行流式与非流式回答
     """
     # =========入参校验-start========
@@ -152,7 +152,7 @@ def completion(tenant_id, chat_id):
     if not DialogService.query(id=chat_id, tenant_id=tenant_id, status=StatusEnum.VALID.value):
         return get_error_data_result(message="You do not own the chat")
     # =========入参校验-end========
-    # ==========构建会话记录对于当前用户问题的chat入参数据-start==========
+    # ==========获取会话中的对话历史和初始化当前问题的回复和检索结果为空-start==========
     msg = []
     # 创建用户当前问题
     question = {
@@ -171,12 +171,12 @@ def completion(tenant_id, chat_id):
     message_id = msg[-1].get("id")
     # 获取助理记录
     e, dia = DialogService.get_by_id(conv.dialog_id)
-    # TODO 初始化会话记录中当前问题的助理数据{"role": "assistant", "content": "", "id": message_id}和检索数据{"chunks": [], "doc_aggs": []}
+    # 初始化会话记录中当前问题的助理回复数据为空【得到答案后会更新此处】--{"role": "assistant", "content": "", "id": message_id}和检索数据为空【得到答案后会更新此处】--{"chunks": [], "doc_aggs": []}
     if not conv.reference:
         conv.reference = []
     conv.message.append({"role": "assistant", "content": "", "id": message_id})
     conv.reference.append({"chunks": [], "doc_aggs": []})
-    # ==========构建会话记录对于当前用户问题的chat入参数据-end==========
+    # ==========获取会话中的对话历史和初始化当前问题的回复和检索结果为空-end==========
     def fillin_conv(ans):
         # 获取检索数据
         reference = ans["reference"]
