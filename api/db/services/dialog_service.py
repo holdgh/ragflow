@@ -129,6 +129,16 @@ def llm_id2llm_type(llm_id):
 
 
 def chat(dialog, messages, stream=True, **kwargs):
+    """
+    功能：聊天对话，回答用户问题
+    逻辑：
+        1、
+        2、
+        3、
+        4、
+        5、
+    """
+    # ===========获取问题和大模型-start==========
     # 断言messages最后一个元素为用户问题
     assert messages[-1]["role"] == "user", "The last content of this conversation is not from user."
     st = timer()
@@ -148,6 +158,8 @@ def chat(dialog, messages, stream=True, **kwargs):
         max_tokens = 8192
     else:
         max_tokens = llm[0].max_tokens
+    # ===========获取问题和大模型-end==========
+    # ===========获取知识库和检索器-start==========
     # 获取知识库记录
     kbs = KnowledgebaseService.get_by_ids(dialog.kb_ids)
     # 要求所选知识库使用统一的embedding模型
@@ -158,15 +170,22 @@ def chat(dialog, messages, stream=True, **kwargs):
     # 根据知识库的解析类型获取检索器
     is_kg = all([kb.parser_id == ParserType.KG for kb in kbs])
     retr = settings.retrievaler if not is_kg else settings.kg_retrievaler
-    # 取包含当前问题和2个历史对话的问题
+    # ===========获取知识库和检索器-end==========
+    # ===========获取附件列表【文档记录id列表】-start==========
+    # 取包含当前问题和2个历史对话的问题 TODO 【这个放的位置有些靠前，当前系统代码有一些地方于此类似，可优化】
     questions = [m["content"] for m in messages if m["role"] == "user"][-3:]
-    # 取对话入参中的文档记录id列表
+    # 取对话入参中的文档记录id列表赋予附件列表
     attachments = kwargs["doc_ids"].split(",") if "doc_ids" in kwargs else None
     if "doc_ids" in messages[-1]:
+        # TODO 用户问题含有doc_ids字段时
+        # 将用户问题的doc_ids字段值赋予attachments【附件列表】
         attachments = messages[-1]["doc_ids"]
+        # 收集其他message中的附件数据
         for m in messages[:-1]:
             if "doc_ids" in m:
                 attachments.extend(m["doc_ids"])
+    # ===========获取附件列表【文档记录id列表】-end==========
+    # ===========获取embedding模型和chat模型-start==========
     # 获取embedding模型
     embd_mdl = LLMBundle(dialog.tenant_id, LLMType.EMBEDDING, embd_nms[0])
     if not embd_mdl:
@@ -176,78 +195,106 @@ def chat(dialog, messages, stream=True, **kwargs):
         chat_mdl = LLMBundle(dialog.tenant_id, LLMType.IMAGE2TEXT, dialog.llm_id)
     else:
         chat_mdl = LLMBundle(dialog.tenant_id, LLMType.CHAT, dialog.llm_id)
-    # 获取助理记录的提示词配置数据
+    # ===========获取embedding模型和chat模型-end==========
+    # ===========获取助理记录中的提示配置【提示配置中含有tts项时获取tts模型】和所选知识库解析配置中的filed_map-start==========
+    # 获取助理记录的提示配置数据
     prompt_config = dialog.prompt_config
     # 获取所选知识库解析配置parser_config中的filed_map数据
     field_map = KnowledgebaseService.get_field_map(dialog.kb_ids)
     tts_mdl = None
     if prompt_config.get("tts"):
+        # 助理记录提示配置中含有tts项时，获取tts模型
         tts_mdl = LLMBundle(dialog.tenant_id, LLMType.TTS)
+    # ===========获取助理记录中的提示配置【提示配置中含有tts项时获取tts模型】和所选知识库解析配置中的filed_map-end==========
+    # ===========field_map非空时，采用SQL检索基于chat模型回答问题-start==========
     # try to use sql if field mapping is good to go
     if field_map:
+        # 所选知识库解析配置中含有filed_map数据时，采用SQL检索数据，基于chat模型回答问题-
         logging.debug("Use SQL to retrieval:{}".format(questions[-1]))
         ans = use_sql(questions[-1], field_map, dialog.tenant_id, chat_mdl, prompt_config.get("quote", True))
         if ans:
             yield ans
             return
-
+    # ===========field_map非空时，采用SQL检索基于chat模型回答问题-end==========
+    # ======助理记录提示配置的关键参数处理【不可选时，对话入参必传校验；可选时，从系统提示词中去除关键参数占位符】-start======
+    # 遍历处理助理记录的提示配置关键参数
     for p in prompt_config["parameters"]:
         if p["key"] == "knowledge":
+            # 跳过关键参数knowledge
             continue
+        # 要求提示配置中的关键参数字段必须【不可选时，必传】在对话入参中有所传值
         if p["key"] not in kwargs and not p["optional"]:
             raise KeyError("Miss parameter: " + p["key"])
         if p["key"] not in kwargs:
+            # 去除提示配置中系统提示词中的可选关键参数
             prompt_config["system"] = prompt_config["system"].replace(
                 "{%s}" % p["key"], " ")
-
+    # ======助理记录提示配置的关键参数处理【不可选时，对话入参必传校验；可选时，从系统提示词中去除关键参数占位符】-end======
+    # ========基于对话历史和多轮对话设置，进行问题重构-start========
     if len(questions) > 1 and prompt_config.get("refine_multiturn"):
+        # 问题列表超过1个问题【说明有对话历史存在】且助理支持多轮对话时，基于对话历史，对当前问题进行重构，生成语义独立的新问题
         questions = [full_question(dialog.tenant_id, dialog.llm_id, messages)]
     else:
+        # 助理不支持多轮对话或问题列表只有一个时，只取当前问题
         questions = questions[-1:]
+    # ========基于对话历史和多轮对话设置，进行问题重构-end========
     refineQ_tm = timer()
     keyword_tm = timer()
-
+    # 获取rerank模型
     rerank_mdl = None
     if dialog.rerank_id:
         rerank_mdl = LLMBundle(dialog.tenant_id, LLMType.RERANK, dialog.rerank_id)
-
+    # TODO 经过重构问题后，这里是干啥？
     for _ in range(len(questions) // 2):
         questions.append(questions[-1])
     if "knowledge" not in [p["key"] for p in prompt_config["parameters"]]:
+        # 助理记录提示配置的关键参数列表中不含knowledge时，设置知识库检索结果为空
         kbinfos = {"total": 0, "chunks": [], "doc_aggs": []}
     else:
+        # 助理记录提示配置的关键参数列表中有knowledge时
+        # 对于用户问题进行关键字提取
         if prompt_config.get("keyword", False):
+            # TODO 官方demo环境中，助理记录的提示配置字段没有keyword字段
+            # 助理记录提示配置中设置了keyword为true时，对问题进行关键字提取，并追加到问题【这里可以理解为检索知识库的查询条件】列表中
             questions[-1] += keyword_extraction(chat_mdl, questions[-1])
             keyword_tm = timer()
-
+        # 对知识库的用户id做去重
         tenant_ids = list(set([kb.tenant_id for kb in kbs]))
+        # 基于--用户问题【可能含有关键字】、embedding模型、用户id列表、助理记录关联的知识库id列表及其他配置、附件列表、rerank模型--进行检索
         kbinfos = retr.retrieval(" ".join(questions), embd_mdl, tenant_ids, dialog.kb_ids, 1, dialog.top_n,
                                         dialog.similarity_threshold,
                                         dialog.vector_similarity_weight,
                                         doc_ids=attachments,
                                         top=dialog.top_k, aggs=False, rerank_mdl=rerank_mdl)
+    # 依据检索结果构造知识库检索内容列表
     knowledges = [ck["content_with_weight"] for ck in kbinfos["chunks"]]
     logging.debug(
         "{}->{}".format(" ".join(questions), "\n->".join(knowledges)))
     retrieval_tm = timer()
-
+    # 检索不到内容且助理记录提示配置中设置了空响应，则回复空响应设置内容
+    # 官方demo环境对空响应的解释：如果在知识库中没有检索到用户的问题，它将使用它作为答案。 如果您希望 LLM 在未检索到任何内容时提出自己的意见，请将此留空。
     if not knowledges and prompt_config.get("empty_response"):
         empty_res = prompt_config["empty_response"]
         yield {"answer": empty_res, "reference": kbinfos, "audio_binary": tts(tts_mdl, empty_res)}
         return {"answer": prompt_config["empty_response"], "reference": kbinfos}
-
+    # 将检索内容放入对话入参中的knowledge字段【这里就是关键参数knowledge的作用】
     kwargs["knowledge"] = "\n\n------\n\n".join(knowledges)
+    # 获取助理记录中的大模型设置
     gen_conf = dialog.llm_setting
-
+    # 基于检索结果构造系统提示词，追加到chat模型输入中
     msg = [{"role": "system", "content": prompt_config["system"].format(**kwargs)}]
+    # 追加对话历史和当前问题到chat大模型输入中
     msg.extend([{"role": m["role"], "content": re.sub(r"##\d+\$\$", "", m["content"])}
                 for m in messages if m["role"] != "system"])
+    # 对于chat模型输入做基于最大token【97%占比】数量限制的适配处理
     used_token_count, msg = message_fit_in(msg, int(max_tokens * 0.97))
     assert len(msg) >= 2, f"message_fit_in has bug: {msg}"
-    # 构造提示词
+    # 构造提示词【考虑对msg的截取处理，这里对截取的内容做了重新收集。这里保留了完整的当前用户问题，说明截取操作避开了对当前用户问题的处理】
+    # 系统提示词
     prompt = msg[0]["content"]
+    # 用户问题【重构后的】
     prompt += "\n\n### Query:\n%s" % " ".join(questions)
-
+    # 设置chat模型生成答案的最大token数量【取【助理记录大模型配置的生成最大token数】与【大模型最大token数-输入已用token数】的最小值】
     if "max_tokens" in gen_conf:
         gen_conf["max_tokens"] = min(
             gen_conf["max_tokens"],
@@ -284,6 +331,7 @@ def chat(dialog, messages, stream=True, **kwargs):
             (done_tm - retrieval_tm) * 1000)
         return {"answer": answer, "reference": refs, "prompt": prompt}
 
+    # 基于chat模型和提示词【检索内容和用户问题】、对话历史、助理记录大模型配置进行问答【区分流式和非流式、】
     if stream:
         last_ans = ""
         answer = ""
@@ -525,15 +573,21 @@ Requirements:
 
 
 def full_question(tenant_id, llm_id, messages):
+    """
+    功能：基于对话历史，对当前问题进行重构，生成语义独立的新问题【有异常时，返回当前用户问题即可】
+    """
+    # 依据llm_id选择chat模型
     if llm_id2llm_type(llm_id) == "image2text":
         chat_mdl = LLMBundle(tenant_id, LLMType.IMAGE2TEXT, llm_id)
     else:
         chat_mdl = LLMBundle(tenant_id, LLMType.CHAT, llm_id)
     conv = []
     for m in messages:
+        # 过滤掉非用户和非助理message【收集用户和助理message】
         if m["role"] not in ["user", "assistant"]: continue
         conv.append("{}: {}".format(m["role"].upper(), m["content"]))
     conv = "\n".join(conv)
+    # 今天、昨天和明天
     today = datetime.date.today().isoformat()
     yesterday = (datetime.date.today() - timedelta(days=1)).isoformat()
     tomorrow = (datetime.date.today() + timedelta(days=1)).isoformat()
@@ -587,7 +641,10 @@ Output: What's the weather in Rochester on {tomorrow}?
 {conv}
 ###############
     """
+    # 注意上述提示词中的conv位置和example内容，意为：基于对话历史，对当前问题进行重构，生成语义独立的问题
+    # 利用chat模型回答问题
     ans = chat_mdl.chat(prompt, [{"role": "user", "content": "Output: "}], {"temperature": 0.2})
+    # chat模型回答中没有error时返回答案；有error时，返回用户当前问题
     return ans if ans.find("**ERROR**") < 0 else messages[-1]["content"]
 
 

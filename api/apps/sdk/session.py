@@ -113,6 +113,10 @@ def update(tenant_id,chat_id,session_id):
 def completion(tenant_id, chat_id):
     """
     功能：利用聊天助手进行对话
+    逻辑：
+        1、入参校验【会话【聊天窗口】、问题、用户与助理的关系合法性】
+        2、构建会话记录对于当前用户问题的chat入参数据
+        3、调用dialog_service的chat逻辑，进行流式与非流式回答
     """
     # =========入参校验-start========
     req = request.json
@@ -158,7 +162,7 @@ def completion(tenant_id, chat_id):
     }
     # 将用户问题收集到会话记录的message字段中
     conv.message.append(question)
-    # 收集会话记录的用户问题到msg【当前用户问题处于msg的最后一个元素】
+    # 收集用户问题【历史用户问题和当前问题】和assistant消息【非第一句开场白，也即是assistant对用户问题的回答】
     for m in conv.message:
         if m["role"] == "system": continue
         if m["role"] == "assistant" and not msg: continue
@@ -172,7 +176,7 @@ def completion(tenant_id, chat_id):
         conv.reference = []
     conv.message.append({"role": "assistant", "content": "", "id": message_id})
     conv.reference.append({"chunks": [], "doc_aggs": []})
-    # ==========构建会话记录对于当前用户问题的chat入参数据-start==========
+    # ==========构建会话记录对于当前用户问题的chat入参数据-end==========
     def fillin_conv(ans):
         # 获取检索数据
         reference = ans["reference"]

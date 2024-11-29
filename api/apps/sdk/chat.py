@@ -30,7 +30,14 @@ from api.utils.api_utils import get_result
 @token_required
 def create(tenant_id):
     """
-    功能：创建聊天助手【关联知识库、提示词、检索参数、大模型及超参数】
+    功能：创建聊天助手【关联知识库、提示prompt、检索参数、大模型及超参数】
+    逻辑：
+        1、检验知识库入参
+        2、检验大模型和用户入参
+        3、提示prompt处理
+        4、助理记录其他字段初始化
+        5、保存助理记录
+        6、构造返回值【多为字段转换逻辑】
     """
     # ============检验知识库入参-start============
     req=request.json
@@ -70,7 +77,7 @@ def create(tenant_id):
     if not e:
         return get_error_data_result(message="Tenant not found!")
     # ============检验大模型和用户入参-end============
-    # ============提示词处理-start============
+    # ============提示prompt处理-start============
     # prompt
     prompt = req.get("prompt")
     key_mapping = {"parameters": "variables",
@@ -83,8 +90,8 @@ def create(tenant_id):
     # 对于vector_similarity_weight，官方demo解释：我们使用混合相似性评分来评估两行文本之间的距离。它是加权关键字相似性和矢量余弦相似性或rerank得分（0〜1）。两个权重的总和为1.0。
     key_list = ["similarity_threshold", "vector_similarity_weight", "top_n", "rerank_id"]
     if prompt:
-        # 入参中的提示词非空时
-        # 基于key_mapping替换提示词入参字段名
+        # 入参中的提示prompt非空时
+        # 基于key_mapping替换提示prompt入参字段名
         for new_key, old_key in key_mapping.items():
             if old_key in prompt:
                 prompt[new_key] = prompt.pop(old_key)
@@ -92,9 +99,9 @@ def create(tenant_id):
         for key in key_list:
             if key in prompt:
                 req[key] = prompt.pop(key)
-        # 将入参中的提示词字段名置为prompt_config
+        # 将入参中的提示prompt字段名置为prompt_config
         req["prompt_config"] = req.pop("prompt")
-    # ============提示词处理-end============
+    # ============提示prompt处理-end============
     # ============助理记录其他字段初始化-start============
     # init
     # 随机id
@@ -141,20 +148,20 @@ def create(tenant_id):
     }
     # 提示词涉及：系统提示词、提示语、关键参数、无法回答时的默认回复
     key_list_2 = ["system", "prologue", "parameters", "empty_response"]
-    # 未设置提示词时，采用默认提示词
+    # 未设置提示配置时，采用默认提示配置
     if "prompt_config" not in req:
         req['prompt_config'] = {}
     for key in key_list_2:
         temp = req['prompt_config'].get(key)
         if not temp:
-            # 未设置提示词的指定项时，采用默认提示词的指定项
+            # 未设置提示配置的指定项时，采用默认提示配置的指定项
             req['prompt_config'][key] = default_prompt[key]
     # 处理关键参数
     for p in req['prompt_config']["parameters"]:
-        # 过滤可选标记
+        # 过滤可选的关键参数
         if p["optional"]:
             continue
-        # 如果系统提示词中没有关键参数字段“类似，{knowledge}”，则抛出异常
+        # 如果系统提示词中没有【不可选，即必有】关键参数字段“类似，{knowledge}”，则抛出异常
         if req['prompt_config']["system"].find("{%s}" % p["key"]) < 0:
             return get_error_data_result(
                 message="Parameter '{}' is not used".format(p["key"]))
