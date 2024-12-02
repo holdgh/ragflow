@@ -37,6 +37,9 @@ class TaskService(CommonService):
     @classmethod
     @DB.connection_context()
     def get_task(cls, task_id):
+        """
+        必要性：由于在手动触发解析时生成的任务记录属性数据较少【一方面仅设置了文档id关联和任务对应的文档起始页；另一方面任务对象本身仅含有前述属性和处理信息，也即任务对象本身属性不多】，而处理任务时需要用到解析配置及模型信息，因此这里对任务表、文档记录表、知识库表和用户表做了关联查询。
+        """
         fields = [
             cls.model.id,
             cls.model.doc_id,

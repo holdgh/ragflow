@@ -32,6 +32,9 @@ def singleton(cls, *args, **kw):
 
 
 def rmSpace(txt):
+    # flags=re.IGNORECASE 表示以不区分大小写的形式进行匹配
+    # \1\2是指反向引用，\1表示引用前方匹配的第一个分组，\2表示引用前方匹配的第二个分组
+    # 举例：(x)(y)\1匹配的是xyx，(x)(y)\2匹配的是xyy
     txt = re.sub(r"([^a-z0-9.,\)>]) +([^ ])", r"\1\2", txt, flags=re.IGNORECASE)
     return re.sub(r"([^ ]) +([^a-z0-9.,\(<])", r"\1\2", txt, flags=re.IGNORECASE)
 

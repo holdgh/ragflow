@@ -299,6 +299,7 @@ def build(row):
         docs.append(d)
     logging.info("MINIO PUT({}):{}".format(row["name"], el))
     # 知识库parser_config中设置auto_keywords非0时，基于chat模型，对每个文件分块进行关键字提取，并将提取结果设置到相应文件分块数据中
+    # 官方demo环境解释：在查询此类关键词时，为每个块提取 N 个关键词以提高其排名得分。在“系统模型设置”中设置的 LLM 将消耗额外的 token。您可以在块列表中查看结果。
     if row["parser_config"].get("auto_keywords", 0):
         st = timer()
         callback(msg="Start to generate keywords for every chunk ...")
@@ -310,6 +311,7 @@ def build(row):
         callback(msg="Keywords generation completed in {:.2f}s".format(timer() - st))
 
     # 知识库parser_config中设置auto_questions非0时，基于chat模型，对每个文件分块进行question生成，并将question数据设置到相应文件分块数据中
+    # 官方demo环境解释：在查询此类问题时，为每个块提取 N 个问题以提高其排名得分。在“系统模型设置”中设置的 LLM 将消耗额外的 token。您可以在块列表中查看结果。如果发生错误，此功能不会破坏整个分块过程，除了将空结果添加到原始块。
     if row["parser_config"].get("auto_questions", 0):
         st = timer()
         callback(msg="Start to generate questions for every chunk ...")
@@ -336,10 +338,14 @@ def embedding(docs, mdl, parser_config=None, callback=None):
     if parser_config is None:
         parser_config = {}
     batch_size = 32
+    # TODO 对文件分块中的标题内容进行正则处理，并收集到tts中
+    # 将文件分块内容中的表格类标签替换为空格【例如：'<table>123</table>'-->' 123 '】，并收集到cnts中
     tts, cnts = [rmSpace(d["title_tks"]) for d in docs if d.get("title_tks")], [
         re.sub(r"</?(table|td|caption|tr|th)( [^<>]{0,12})?>", " ", d["content_with_weight"]) for d in docs]
     tk_count = 0
     if len(tts) == len(cnts):
+        # 如果标题列表和内容列表等长
+        # 对标题列表分批进行embedding，收集结果到tts_中
         tts_ = np.array([])
         for i in range(0, len(tts), batch_size):
             vts, c = mdl.encode(tts[i: i + batch_size])
@@ -350,7 +356,7 @@ def embedding(docs, mdl, parser_config=None, callback=None):
             tk_count += c
             callback(prog=0.6 + 0.1 * (i + 1) / len(tts), msg="")
         tts = tts_
-
+    # 对内容列表分批进行embedding，收集结果到cnts_
     cnts_ = np.array([])
     for i in range(0, len(cnts), batch_size):
         vts, c = mdl.encode(cnts[i: i + batch_size])
@@ -363,11 +369,13 @@ def embedding(docs, mdl, parser_config=None, callback=None):
     cnts = cnts_
 
     title_w = float(parser_config.get("filename_embd_weight", 0.1))
+    # 【标题列表和内容列表等长】对标题和内容的embedding结果进行加权求和，得到最终embedding结果
     vects = (title_w * tts + (1 - title_w) *
              cnts) if len(tts) == len(cnts) else cnts
-
+    # embedding结果应该和文件分块的长度一致，也即一个文件分块，经过embedding处理，得到一个embedding结果
     assert len(vects) == len(docs)
     vector_size = 0
+    # 将embedding结果对应追加到文件分块的”q_embedding结果长度_vec“字段中
     for i, d in enumerate(docs):
         v = vects[i].tolist()
         vector_size = len(v)
@@ -393,7 +401,7 @@ def run_raptor(row, chat_mdl, embd_mdl, callback=None):
     # es检索当前任务记录对应文档【doc_id】的分块数据【两个字段：content_with_weight，vctr_nm】列表【最多1024条】
     for d in settings.retrievaler.chunk_list(row["doc_id"], row["tenant_id"], [str(row["kb_id"])],
                                              fields=["content_with_weight", vctr_nm]):
-        # 收集【已保存的】分块数据
+        # 收集【已保存的】分块数据【(文件分块的文本内容,文件分块的embedding结果)】
         chunks.append((d["content_with_weight"], np.array(d[vctr_nm])))
     # 创建一个“组织树检索的递归抽象处理”对象
     raptor = Raptor(
