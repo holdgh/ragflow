@@ -60,16 +60,19 @@ class Docx(DocxParser):
         return line
 
     def __call__(self, filename, binary=None, from_page=0, to_page=100000):
+        # 创建文档对象
         self.doc = Document(
             filename) if not binary else Document(BytesIO(binary))
         pn = 0
         lines = []
         last_image = None
+        # 处理文档对象的每一页内容
         for p in self.doc.paragraphs:
             if pn > to_page:
                 break
             if from_page <= pn < to_page:
                 if p.text.strip():
+                    # 去除当前页内容的两侧空格，非空时
                     if p.style and p.style.name == 'Caption':
                         former_image = None
                         if lines and lines[-1][1] and lines[-1][2] != 'Caption':
@@ -186,12 +189,16 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
         This method apply the naive ways to chunk files.
         Successive text will be sliced into pieces using 'delimiter'.
         Next, these successive pieces are merge into chunks whose token number is no more than 'Max token number'.
+        task_executor.py中build方法之调用chunk操作入参：
+            - 文件名、文件、起始页、终止页、知识库语言、任务回调函数callback、知识库id、知识库解析配置、用户id
     """
-
+    # 校验当前解析语言设置是否为英文
     eng = lang.lower() == "english"  # is_english(cks)
+    # 获取当前解析配置：分块token数量、分隔符【功能解释：支持多字符作为分隔符，多字符分隔符用`包裹。如配置成这样： `##`;那么就会用换行，两个#以及分号先对文本进行分割，然后按照“ token number”大小进行拼装。】、是否开启布局识别【功能解释：使用视觉模型进行布局分析，以更好地识别文档结构，找到标题、文本块、图像和表格的位置。 如果没有此功能，则只能获取 PDF 的纯文本。】
     parser_config = kwargs.get(
         "parser_config", {
             "chunk_token_num": 128, "delimiter": "\n!?。；！？", "layout_recognize": True})
+    # 构造当前【页码/行号范围内】文件的文档对象
     doc = {
         "docnm_kwd": filename,
         "title_tks": rag_tokenizer.tokenize(re.sub(r"\.[a-zA-Z]+$", "", filename))
@@ -200,7 +207,9 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
     res = []
     pdf_parser = None
     if re.search(r"\.docx$", filename, re.IGNORECASE):
+        # 基于xml格式的word文档
         callback(0.1, "Start to parse.")
+        # 创建docx对象
         sections, tbls = Docx()(filename, binary)
         res = tokenize_table(tbls, doc, eng)  # just for table
 
@@ -211,7 +220,7 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
             sections, int(parser_config.get(
                 "chunk_token_num", 128)), parser_config.get(
                 "delimiter", "\n!?。；！？"))
-
+        # 注意section_only参数来源于调用chunk操作处，而非来源于知识库解析配置数据
         if kwargs.get("section_only", False):
             return chunks
 
@@ -220,6 +229,7 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
         return res
 
     elif re.search(r"\.pdf$", filename, re.IGNORECASE):
+        # pdf文件【起止页码参数对pdf文件有效】
         pdf_parser = Pdf(
         ) if parser_config.get("layout_recognize", True) else PlainParser()
         sections, tbls = pdf_parser(filename if not binary else binary,
@@ -227,6 +237,7 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
         res = tokenize_table(tbls, doc, eng)
 
     elif re.search(r"\.xlsx?$", filename, re.IGNORECASE):
+        # excel表格
         callback(0.1, "Start to parse.")
         excel_parser = ExcelParser()
         if parser_config.get("html4excel"):
@@ -235,6 +246,7 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
             sections = [(_, "") for _ in excel_parser(binary) if _]
 
     elif re.search(r"\.(txt|py|js|java|c|cpp|h|php|go|ts|sh|cs|kt|sql)$", filename, re.IGNORECASE):
+        # 文本文件及各类代码文件
         callback(0.1, "Start to parse.")
         sections = TxtParser()(filename, binary,
                                parser_config.get("chunk_token_num", 128),
@@ -242,24 +254,28 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
         callback(0.8, "Finish parsing.")
 
     elif re.search(r"\.(md|markdown)$", filename, re.IGNORECASE):
+        # markdown文件
         callback(0.1, "Start to parse.")
         sections, tbls = Markdown(int(parser_config.get("chunk_token_num", 128)))(filename, binary)
         res = tokenize_table(tbls, doc, eng)
         callback(0.8, "Finish parsing.")
 
     elif re.search(r"\.(htm|html)$", filename, re.IGNORECASE):
+        # 网页文件
         callback(0.1, "Start to parse.")
         sections = HtmlParser()(filename, binary)
         sections = [(_, "") for _ in sections if _]
         callback(0.8, "Finish parsing.")
 
     elif re.search(r"\.json$", filename, re.IGNORECASE):
+        # json文件
         callback(0.1, "Start to parse.")
         sections = JsonParser(int(parser_config.get("chunk_token_num", 128)))(binary)
         sections = [(_, "") for _ in sections if _]
         callback(0.8, "Finish parsing.")
 
     elif re.search(r"\.doc$", filename, re.IGNORECASE):
+        # 基于二进制交换格式的word文档
         callback(0.1, "Start to parse.")
         binary = BytesIO(binary)
         doc_parsed = parser.from_buffer(binary)
@@ -268,14 +284,17 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
         callback(0.8, "Finish parsing.")
 
     else:
+        # 其他文件类型，提示异常
         raise NotImplementedError(
             "file type not supported yet(pdf, xlsx, doc, docx, txt supported)")
 
     st = timer()
+    # 收集文件解析结果，进行切分合并，得到文件分块列表
     chunks = naive_merge(
         sections, int(parser_config.get(
             "chunk_token_num", 128)), parser_config.get(
             "delimiter", "\n!?。；！？"))
+    # 注意section_only参数来源于调用chunk操作处，而非来源于知识库解析配置数据
     if kwargs.get("section_only", False):
         return chunks
 

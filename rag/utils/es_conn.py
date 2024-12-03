@@ -419,6 +419,10 @@ class ESConnection(DocStoreConnection):
     """
 
     def sql(self, sql: str, fetch_size: int, format: str):
+        """
+        功能：执行sql，返回指定格式format的数量不超过fetch_size的数据
+        """
+        # =======优化SQL，满足es执行SQL的要求-start=======
         logging.debug(f"ESConnection.sql get sql: {sql}")
         sql = re.sub(r"[ `]+", " ", sql)
         sql = sql.replace("%", "")
@@ -437,8 +441,9 @@ class ESConnection(DocStoreConnection):
         for p, r in replaces:
             sql = sql.replace(p, r, 1)
         logging.debug(f"ESConnection.sql to es: {sql}")
-
+        # =======优化SQL，满足es执行SQL的要求-end=======
         for i in range(3):
+            # 尝试3次查询操作，成功则直接返回查询结果
             try:
                 res = self.es.sql.query(body={"query": sql, "fetch_size": fetch_size}, format=format,
                                         request_timeout="2s")

@@ -65,7 +65,7 @@ BATCH_SIZE = 64
 
 FACTORY = {
     "general": naive,
-    ParserType.NAIVE.value: naive,
+    ParserType.NAIVE.value: na14zhongive,
     ParserType.PAPER.value: paper,
     ParserType.BOOK.value: book,
     ParserType.PRESENTATION.value: presentation,
@@ -73,6 +73,7 @@ FACTORY = {
     ParserType.LAWS.value: laws,
     ParserType.QA.value: qa,
     ParserType.TABLE.value: table,
+    # 简历解析器--生成了field_map字段，在问答时执行SQL检索问答
     ParserType.RESUME.value: resume,
     ParserType.PICTURE.value: picture,
     ParserType.ONE.value: one,

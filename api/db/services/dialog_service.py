@@ -137,7 +137,7 @@ def chat(dialog, messages, stream=True, **kwargs):
             - 获取知识库和检索器
             - 获取文档id列表【附件列表】
             - 获取embedding模型和chat模型
-            - 获取助理记录的提示配置【TODO tts模型是干啥的？】和知识库的解析配置【field_map字段】
+            - 获取助理记录的提示配置【tts模型是干啥的？文本转语音模型，用于语音播报回答内容】和知识库的解析配置【field_map字段】
         2、依据field_map字段，分情况问答处理：
             - 具备field_map字段时，TODO 执行基于SQL的检索回答逻辑
             - 不具备field_map字段时，执行基于检索器的检索回答逻辑
@@ -222,13 +222,14 @@ def chat(dialog, messages, stream=True, **kwargs):
         # 助理记录提示配置中含有tts项时，获取tts模型
         tts_mdl = LLMBundle(dialog.tenant_id, LLMType.TTS)
     # ===========获取助理记录中的提示配置【提示配置中含有tts项时获取tts模型】和所选知识库解析配置中的filed_map-end==========
-    # ===========field_map非空时，采用SQL检索基于chat模型回答问题-start==========
+    # ===========field_map非空时【对应resume，简历解析器】，采用SQL检索基于chat模型回答问题-start==========
     # try to use sql if field mapping is good to go
     if field_map:
         # 所选知识库解析配置中含有filed_map数据时，采用SQL检索数据，基于chat模型回答问题-
         logging.debug("Use SQL to retrieval:{}".format(questions[-1]))
         ans = use_sql(questions[-1], field_map, dialog.tenant_id, chat_mdl, prompt_config.get("quote", True))
         if ans:
+            # 当SQL检索不到数据【见use_sql逻辑，SQL查不到数据，直接返回none，此时会非SQL检索回答逻辑】时，还要进行后续知识库的检索
             yield ans
             return
     # ===========field_map非空时，采用SQL检索基于chat模型回答问题-end==========
@@ -377,6 +378,7 @@ def chat(dialog, messages, stream=True, **kwargs):
 
 
 def use_sql(question, field_map, tenant_id, chat_mdl, quota=True):
+    # 利用提示词和用户问题，基于大模型构造查询SQL
     sys_prompt = "你是一个DBA。你需要这对以下表的字段结构，根据用户的问题列表，写出最后一个问题对应的SQL。"
     user_promt = """
 表名：{}；
@@ -395,36 +397,49 @@ def use_sql(question, field_map, tenant_id, chat_mdl, quota=True):
 
     def get_table():
         nonlocal sys_prompt, user_promt, question, tried_times
+        # 获取大模型构造的SQL语句
         sql = chat_mdl.chat(sys_prompt, [{"role": "user", "content": user_promt}], {
             "temperature": 0.06})
         logging.debug(f"{question} ==> {user_promt} get SQL: {sql}")
+        # ==========优化SQL语句【特殊字符替换、查询字段优化】-start===========
+        # 对SQL语句进行正则处理【标点及语法问题处理】
         sql = re.sub(r"[\r\n]+", " ", sql.lower())
         sql = re.sub(r".*select ", "select ", sql.lower())
         sql = re.sub(r" +", " ", sql)
         sql = re.sub(r"([;；]|```).*", "", sql)
+        # SQL语句开头必为"select "
         if sql[:len("select ")] != "select ":
             return None, None
         if not re.search(r"((sum|avg|max|min)\(|group by )", sql.lower()):
+            # SQL语句中不存在类似"sum(/avg(/max(/min(/group by"时
             if sql[:len("select *")] != "select *":
+                # 非全量字段查询时，追加查询字段：doc_id和docnm_kwd
                 sql = "select doc_id,docnm_kwd," + sql[6:]
             else:
+                # 查询全量字段时，也即查询语句开头为：select *
                 flds = []
+                # 收集知识库解析配置数据中的field_map字段集合，最多支持11个字段
                 for k in field_map.keys():
                     if k in forbidden_select_fields4resume:
+                        # 过滤掉禁止查询的字段--"name_pinyin_kwd", "edu_first_fea_kwd", "degree_kwd", "sch_rank_kwd", "edu_fea_kwd"
                         continue
                     if len(flds) > 11:
                         break
                     flds.append(k)
+                # 将select *替换为select doc_id,docnm_kwd,",".join(flds)，也即全量查询改为特定字段的查询
                 sql = "select doc_id,docnm_kwd," + ",".join(flds) + sql[8:]
-
         logging.debug(f"{question} get SQL(refined): {sql}")
+        # ==========优化SQL语句【特殊字符替换、查询字段优化】-end===========
         tried_times += 1
+        # 利用检索器，执行sql
         return settings.retrievaler.sql_retrieval(sql, format="json"), sql
-
+    # 基于提示词和大模型构造SQL语句，并对SQL语句进行语法和查询字段的优化，然后经过满足es要求SQL优化，进行es检索，返回查询结果
     tbl, sql = get_table()
     if tbl is None:
+        # sql查询结果为空时，直接返回none
         return None
     if tbl.get("error") and tried_times <= 2:
+        # 当查询出现error且重试次数不超过2次，则进行基于提示词和大模型的sql语句优化逻辑
         user_promt = """
         表名：{}；
         数据库表字段说明如下：
@@ -445,20 +460,24 @@ def use_sql(question, field_map, tenant_id, chat_mdl, quota=True):
             "\n".join([f"{k}: {v}" for k, v in field_map.items()]),
             question, sql, tbl["error"]
         )
+        # 调整SQL语句生成提示词，重新生成SQL语句，进行SQL语句优化和查询，返回查询结果
         tbl, sql = get_table()
         logging.debug("TRY it again: {}".format(sql))
 
     logging.debug("GET table: {}".format(tbl))
+    # 经过重试之后，查询结果依然存在error信息或者查询结果为空，则直接返回none
     if tbl.get("error") or len(tbl["rows"]) == 0:
         return None
-
+    # =========根据SQL检索结果，构造回答【markdown格式的数据】-start==========
+    # 收集查询结果中的文档id集合【去重】
     docid_idx = set([ii for ii, c in enumerate(
         tbl["columns"]) if c["name"] == "doc_id"])
+    # 收集查询结果中的文件名称集合【去重】
     docnm_idx = set([ii for ii, c in enumerate(
         tbl["columns"]) if c["name"] == "docnm_kwd"])
     clmn_idx = [ii for ii in range(
         len(tbl["columns"])) if ii not in (docid_idx | docnm_idx)]
-
+    # 构造markdown数据
     # compose markdown table
     clmns = "|" + "|".join([re.sub(r"(/.*|（[^（）]+）)", "", field_map.get(tbl["columns"][i]["name"],
                                                                         tbl["columns"][i]["name"])) for i in
@@ -499,6 +518,7 @@ def use_sql(question, field_map, tenant_id, chat_mdl, quota=True):
                                    doc_aggs.items()]},
         "prompt": sys_prompt
     }
+    # =========根据SQL检索结果，构造回答-end==========
 
 
 def relevant(tenant_id, llm_id, question, contents: list):

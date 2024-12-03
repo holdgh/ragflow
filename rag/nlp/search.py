@@ -286,11 +286,18 @@ class Dealer:
 
     def retrieval(self, question, embd_mdl, tenant_ids, kb_ids, page, page_size, similarity_threshold=0.2,
                   vector_similarity_weight=0.3, top=1024, doc_ids=None, aggs=True, rerank_mdl=None, highlight=False):
+        """
+        入参介绍：用户问题【可能含有关键字】、embedding模型、用户id列表、助理记录关联的知识库id列表及其他配置、附件列表、rerank模型
+        注意：page传参，sdk的助理聊天接口传参为1
+        """
+        # 初始化检索结果
         ranks = {"total": 0, "chunks": [], "doc_aggs": {}}
         if not question:
+            # 用户问题为空时，直接返回
             return ranks
-
+        # rerank页数限制
         RERANK_PAGE_LIMIT = 3
+        # 构造检索入参
         req = {"kb_ids": kb_ids, "doc_ids": doc_ids, "size": max(page_size*RERANK_PAGE_LIMIT, 128),
                "question": question, "vector": True, "topk": top,
                "similarity": similarity_threshold,
@@ -307,12 +314,16 @@ class Dealer:
         ranks["total"] = sres.total
 
         if page <= RERANK_PAGE_LIMIT:
+            # 页数在rerank页数限制之内，进行rerank处理
             if rerank_mdl:
+                # rerank模型非空时，利用模型进行rerank
                 sim, tsim, vsim = self.rerank_by_model(rerank_mdl,
                     sres, question, 1 - vector_similarity_weight, vector_similarity_weight)
             else:
+                # rerank模型为空时，利用算法进行rerank
                 sim, tsim, vsim = self.rerank(
                     sres, question, 1 - vector_similarity_weight, vector_similarity_weight)
+            # TODO 这里是什么排序？
             idx = np.argsort(sim * -1)[(page-1)*page_size:page*page_size]
         else:
             sim = tsim = vsim = [1]*len(sres.ids)
@@ -321,6 +332,7 @@ class Dealer:
         dim = len(sres.query_vector)
         vector_column = f"q_{dim}_vec"
         zero_vector = [0.0] * dim
+        # 利用相似度阈值过滤查询结果，整理并收集查询结果
         for i in idx:
             if sim[i] < similarity_threshold:
                 break
@@ -368,6 +380,8 @@ class Dealer:
         return ranks
 
     def sql_retrieval(self, sql, fetch_size=128, format="json"):
+        # 执行SQL，返回特定格式format的结果tbl
+        # dataStore为rag.utils.es_conn.ESConnection()，此处为执行es的SQL查询操作
         tbl = self.dataStore.sql(sql, fetch_size, format)
         return tbl
 
