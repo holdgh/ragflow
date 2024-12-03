@@ -59,10 +59,10 @@ class RecursiveAbstractiveProcessing4TreeOrganizedRetrieval:
         功能：raptor任务处理【递归处理】
         逻辑：
             1、获取当前chunks的起止索引[start, end-1]【当end-start<=1时,循环终止】
-            2、summarize处理：对chunks中索引在ck_idx【索引列表】的内容进行基于大模型和知识库记录parser_config中提示词的处理后，接着对大模型输出做embedding处理，并将embedding结果和大模型输出追加到chunks中
+            2、summarize处理：对chunks中索引在ck_idx【索引列表】的内容进行基于大模型和知识库记录parser_config中提示词的处理【摘要总结】后，接着对大模型输出做embedding处理，并将embedding结果和大模型输出追加到chunks中
             3、更新起止索引：
                 start = end
-                end = len(chunks) # 由于chunks经过summarize处理后，追加了新的元组元素【(文本内容，文本内容的embedding结果)】，因此这里的索引更新，正常情况下满足end-start>1
+                end = len(chunks) # 由于chunks经过summarize处理后，追加了新的元组元素【(文本内容，文本内容的embedding结果)】，因此这里的索引更新，正常情况下满足end-start>0
             关键逻辑说明：ck_idx的获取方式
                 - 当end=start+2时，ck_idx为[start, start+1]
                 - 当end>start+2时，对chunks[start:end]，采用降维聚类的方式，获取对应类目的ck_idx【比如聚类有5个，则对应执行5次summarize逻辑，对应的ck_idx为属于相应类目的文件分块索引】
@@ -91,6 +91,22 @@ class RecursiveAbstractiveProcessing4TreeOrganizedRetrieval:
                 # 对文本内容进行基于token允许长度的截断处理，只取token允许长度范围内的文本内容
                 cluster_content = "\n".join([truncate(t, max(1, len_per_chunk)) for t in texts])
                 # self_prompt来源于当前任务对应文档记录的parser_config【来源于知识库】中的提示词
+                """
+                官方demo环境提示词初始配置如下：
+                '''
+                请总结以下段落。 小心数字，不要编造。 段落如下：
+                    {cluster_content}
+                以上就是你需要总结的内容。
+                '''
+                由上述提示词可知，这里是对文件分块列表做摘要总结。结合对embedding数据降维聚类，可知raptor的逻辑：
+                    1、对文件分块解析结果列表【[start，end)范围内的】做摘要总结。
+                        - 总览：【元组列表，(文本内容，文本内容的embedding结果)，可以将embedding结果分两个方面看待：表征当前分块内容的语义；可看作是文本内容的索引【体现在，对embedding数据降维聚类，取同一类的文本内容，进行summarize操作】】
+                        - 分步：
+                            - 提取当前范围内的embedding结果列表，进行降维聚类处理，得到n个类别
+                            - 对当前范围内的embedding结果列表，做类别预测，选出同一类的索引，以取到相应的【同一类别的】文本内容列表，做summarize处理【文本摘要和embedding】，追加到文本分块解析结果列表中【后续更新start和end时，是对新得到这些文本分块解析结果做同步骤1的处理】
+                    2、更新start和end，处理新得到的那些文本分块解析结果
+                    3、直到start和end相差小于2时【也即第1步最多生成1个(摘要总结内容，摘要总结内容的embedding结果)】，raptor逻辑结束
+                """
                 cnt = self._llm_model.chat("You're a helpful assistant.",
                                              [{"role": "user", "content": self._prompt.format(cluster_content=cluster_content)}],
                                              {"temperature": 0.3, "max_tokens": self._max_token}
@@ -155,6 +171,7 @@ class RecursiveAbstractiveProcessing4TreeOrganizedRetrieval:
               )
             """
             # umap 一种非线性降维和可视化算法。它通过构建数据点之间的邻近关系图，并利用图的拓扑结构进行流形近似和优化。可用在高维度的数据处理中，使其可视化
+            # TODO 这里降维的作用：提取主要特征，减少后续高斯混合模型的计算量？
             reduced_embeddings = umap.UMAP(
                 n_neighbors=max(2, n_neighbors), n_components=min(12, len(embeddings)-2), metric="cosine"
             ).fit_transform(embeddings)
